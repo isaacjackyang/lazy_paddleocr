@@ -505,7 +505,7 @@ try {
         "distribution_tools\build_portable_bundle.bat",
         "distribution_tools\build_full_portable_bundle.bat",
         "distribution_tools\build_portable_bundle.ps1",
-        "install_and_start.bat",
+        "install_paddle_all.bat",
         "ocr_here.bat",
         "register_shared_ocr_home.cmd",
         "tools\merge_txt_by_serial.ps1",

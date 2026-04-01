@@ -28,9 +28,9 @@
 
 ## 一般使用方式
 
-1. 雙擊 `install_and_start.bat`
+1. 雙擊 `install_paddle_all.bat`
 2. 或執行 `tools\install_paddle_ocr_suite.ps1`
-3. 啟動後依提示選擇 OCR 模式與信心分數門檻
+3. 安裝完成後查看畫面最後的安裝摘要
 
 如果安裝在完成前中斷，安裝程式現在會顯示手動修復清單，並把相同的 PowerShell 指令寫入 `tools\install_manual_recovery.ps1`。
 如果你想一次建立 CPU 與 GPU 兩套獨立環境，可改用 `tools\install_paddleocr.ps1`。
@@ -100,7 +100,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddleocr.ps1
 - 安裝 PaddlePaddle、PaddleOCR、PyMuPDF 與 PP-StructureV3 相依套件
 - 會同時驗證 `PP-OCRv5` 與 `PP-StructureV3` 都能成功初始化，任一失敗都視為安裝失敗
 - 預設使用 GPU 模式，但若 GPU 安裝或驗證失敗會自動回退到 CPU
-- 安裝完成後可選擇直接啟動 OCR 啟動器
+- 安裝完成後會顯示已安裝元件與版本摘要
 
 **常用執行方式**
 
@@ -113,8 +113,6 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddle_ocr_suite.ps
 - `-Mode gpu` 或 `-Mode cpu`：選擇偏好的安裝模式
 - `-Cuda cu118` / `cu126` / `cu129` / `cu130`：指定 Paddle GPU 套件來源版本
 - `-StrictVenvPythonMatch`：如果 `.venv` 的 Python major.minor 與偵測到的系統 Python 不一致，就重建 `.venv`
-- `-NoAutoStart`：只安裝，不在完成後自動啟動 OCR
-
 **適合使用時機**
 
 - 這台電腦尚未完成環境安裝
@@ -553,7 +551,7 @@ EXE 會承接目前 `.venv` 的 runtime 類型。
 
 1. 將 ZIP 解壓到短且可寫入的資料夾，例如 `D:\PaddleOCR`
 2. 如果該資料夾中已經有舊的 `.venv`，請先刪除
-3. 執行 `install_and_start.bat`
+3. 執行 `install_paddle_all.bat`
 4. 讓安裝程式在該電腦上重新建立環境
 
 如果打包中包含 `bundled_wheels`，請保持它與 `tools\install_paddle_ocr_suite.ps1` 所在的整個資料夾結構一起移動，不要只單獨搬 `tools\` 裡的檔案。

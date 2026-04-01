@@ -9,16 +9,8 @@ param(
 
     [switch]$StrictVenvPythonMatch = $false,
 
-    [int]$PipInstallTimeoutSeconds = 600,
-
-    [switch]$AutoStart = $true,
-
-    [switch]$NoAutoStart = $false
+    [int]$PipInstallTimeoutSeconds = 600
 )
-
-if ($NoAutoStart) {
-    $AutoStart = $false
-}
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "Continue"
@@ -639,10 +631,6 @@ function Invoke-InstallerFromShortDrive {
 
     if ($StrictVenvPythonMatch) {
         $argumentList += "-StrictVenvPythonMatch"
-    }
-
-    if (-not $AutoStart) {
-        $argumentList += "-NoAutoStart"
     }
 
     $previousOriginalRoot = $env:PADDLE_OCR_ORIGINAL_ROOT
@@ -1679,20 +1667,53 @@ except Exception as e:
     }
 }
 
-function Start-Launcher {
-    param([string]$ProjectRoot)
+function Get-InstalledComponentSummary {
+    param(
+        [string]$PythonExe,
+        [string]$FinalMode
+    )
 
-    $launcher = Join-Path $ProjectRoot "tools\start_ocr_launcher.ps1"
-    if (-not (Test-Path $launcher)) {
-        Write-Host "tools\start_ocr_launcher.ps1 not found. Skipping auto-start." -ForegroundColor Yellow
-        return
+    $tempPy = [System.IO.Path]::ChangeExtension([System.IO.Path]::GetTempFileName(), ".py")
+    try {
+        Set-Content -Path $tempPy -Encoding ASCII -Value @"
+import importlib.metadata as md
+import json
+import sys
+
+packages = {}
+for name in ("paddlepaddle", "paddlepaddle-gpu", "paddleocr", "paddlex", "PyMuPDF"):
+    try:
+        packages[name] = md.version(name)
+    except Exception:
+        packages[name] = ""
+
+summary = {
+    "python": sys.version.split()[0],
+    "paddle": packages.get("paddlepaddle-gpu") or packages.get("paddlepaddle") or "",
+    "paddleocr": packages.get("paddleocr") or "",
+    "paddlex": packages.get("paddlex") or "",
+    "pymupdf": packages.get("PyMuPDF") or "",
+    "mode": "$FinalMode"
+}
+print(json.dumps(summary, ensure_ascii=True))
+"@
+
+        $result = Invoke-NativeProcess -FilePath $PythonExe -ArgumentList @($tempPy)
+        if ($result.ExitCode -ne 0) {
+            throw "Failed to collect the installed package summary."
+        }
+
+        $jsonLine = $result.StdOut | Where-Object { $_ } | Select-Object -Last 1
+        if (-not $jsonLine) {
+            throw "Failed to collect the installed package summary."
+        }
+
+        return $jsonLine | ConvertFrom-Json
     }
-
-    $launcherResult = Invoke-InteractiveNativeProcess `
-        -FilePath "powershell.exe" `
-        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $launcher)
-    if ($launcherResult.ExitCode -ne 0) {
-        throw "Launcher failed."
+    finally {
+        if (Test-Path $tempPy) {
+            Remove-Item $tempPy -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -1717,9 +1738,6 @@ try {
         "Install PP-StructureV3 dependencies",
         "Verify installation"
     )
-    if ($AutoStart) {
-        $phaseNames += "Start OCR Launcher"
-    }
     $phaseTotal = $phaseNames.Count
     $phaseCounter = 0
 
@@ -1837,19 +1855,33 @@ try {
     $script:InstallStageStatus.verify = $true
     Finish-InstallPhase -Name "Verify installation" -PhaseIndex $phaseCounter -PhaseTotal $phaseTotal
 
+    $InstalledSummary = $null
+    try {
+        $InstalledSummary = Get-InstalledComponentSummary -PythonExe $VenvPython -FinalMode $FinalMode
+    }
+    catch {
+        Write-Host "Installed package summary could not be collected automatically." -ForegroundColor Yellow
+        Write-Host $_.Exception.Message -ForegroundColor Yellow
+    }
+
     Write-Host "Installation completed successfully." -ForegroundColor Green
     $SharedLauncherConfigPath = Register-SharedLauncherRoot -ProjectRoot $ProjectRoot
     Write-Host "Shared OCR home registered: $ProjectRoot" -ForegroundColor Green
     Write-Host "Shared OCR home file: $SharedLauncherConfigPath" -ForegroundColor Green
     Write-Host "Log file: $LogPath" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Installed components:" -ForegroundColor Cyan
+    Write-Host "Python          : $(if ($InstalledSummary) { $InstalledSummary.python } else { '(not detected)' })" -ForegroundColor Green
+    Write-Host "Virtual env     : $VenvPython" -ForegroundColor Green
+    Write-Host "Paddle mode     : $(if ($InstalledSummary) { $InstalledSummary.mode } else { $FinalMode })" -ForegroundColor Green
+    Write-Host "PaddlePaddle    : $(if ($InstalledSummary -and $InstalledSummary.paddle) { $InstalledSummary.paddle } else { '(not detected)' })" -ForegroundColor Green
+    Write-Host "PaddleOCR       : $(if ($InstalledSummary -and $InstalledSummary.paddleocr) { $InstalledSummary.paddleocr } else { '(not detected)' })" -ForegroundColor Green
+    Write-Host "PaddleX         : $(if ($InstalledSummary -and $InstalledSummary.paddlex) { $InstalledSummary.paddlex } else { '(not detected)' })" -ForegroundColor Green
+    Write-Host "PyMuPDF         : $(if ($InstalledSummary -and $InstalledSummary.pymupdf) { $InstalledSummary.pymupdf } else { '(not detected)' })" -ForegroundColor Green
+    Write-Host "PP-OCRv5        : READY" -ForegroundColor Green
+    Write-Host "PP-StructureV3  : READY" -ForegroundColor Green
 
     try { Stop-Transcript | Out-Null } catch {}
-
-    if ($AutoStart) {
-        Start-InstallPhase -Name "Start OCR Launcher" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
-        Start-Launcher -ProjectRoot $ProjectRoot
-        Finish-InstallPhase -Name "Start OCR Launcher" -PhaseIndex $phaseCounter -PhaseTotal $phaseTotal
-    }
 
     Write-Progress -Id 1 -Activity "Installing OCR environment" -Status "Completed" -PercentComplete 100 -CurrentOperation $ProjectRoot
     Write-Progress -Id 2 -Activity "Installing OCR environment" -Completed

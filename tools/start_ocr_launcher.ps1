@@ -1,3 +1,4 @@
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$PythonExe = ".\.venv\Scripts\python.exe",
     [string]$LauncherScript = ".\tools\run_ocr_launcher.py",
@@ -9,7 +10,9 @@ param(
     [switch]$KeepPdfImages,
     [string]$PdfImageDirname = "_pdf_pages",
     [string]$ImageExts = ".jpg,.jpeg,.png,.bmp,.tif,.tiff,.webp",
-    [string]$PdfExts = ".pdf"
+    [string]$PdfExts = ".pdf",
+    [Parameter(ValueFromRemainingArguments = $true)]
+    [string[]]$RemainingArgs = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -193,6 +196,58 @@ function Invoke-InteractiveNativeProcess {
     }
 }
 
+function Resolve-ScanRoot {
+    param(
+        [string]$ProjectRoot,
+        [string]$ExplicitRoot,
+        [string[]]$RemainingArguments
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitRoot)) {
+        return (Resolve-Path $ExplicitRoot).Path
+    }
+
+    if (-not $RemainingArguments -or $RemainingArguments.Count -eq 0) {
+        return ""
+    }
+
+    $rawCandidates = @()
+    $joined = ($RemainingArguments -join " ").Trim()
+    if ($joined) {
+        $rawCandidates += $joined
+    }
+    foreach ($item in $RemainingArguments) {
+        if (-not [string]::IsNullOrWhiteSpace($item) -and ($rawCandidates -notcontains $item)) {
+            $rawCandidates += $item
+        }
+    }
+
+    foreach ($candidate in $rawCandidates) {
+        $resolved = $null
+
+        if (Test-Path -LiteralPath $candidate) {
+            $resolved = (Resolve-Path -LiteralPath $candidate).Path
+        }
+        elseif (Test-Path -LiteralPath (Join-Path $ProjectRoot $candidate)) {
+            $resolved = (Resolve-Path -LiteralPath (Join-Path $ProjectRoot $candidate)).Path
+        }
+
+        if (-not $resolved) {
+            continue
+        }
+
+        $item = Get-Item -LiteralPath $resolved
+        if ($item.PSIsContainer) {
+            return $item.FullName
+        }
+
+        return $item.DirectoryName
+    }
+
+    Write-Host "Ignoring extra launcher arguments: $($RemainingArguments -join ' ')" -ForegroundColor Yellow
+    return ""
+}
+
 try {
     $phaseTotal = 4
     $phaseCounter = 0
@@ -223,6 +278,7 @@ try {
     }
 
     $RecursiveEnabled = -not $NoRecursive
+    $ResolvedRoot = Resolve-ScanRoot -ProjectRoot $ProjectRoot -ExplicitRoot $Root -RemainingArguments $RemainingArgs
     $SharedLauncherConfigPath = Register-SharedLauncherRoot -ProjectRoot $ProjectRoot
     Write-Host "Shared OCR Home   : $ProjectRoot"
     Write-Host "Shared Home File  : $SharedLauncherConfigPath"
@@ -231,6 +287,7 @@ try {
     Start-LauncherPhase -Name "Show settings" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
     Write-Host "Python            : $ResolvedPythonExe"
     Write-Host "Launcher          : $ResolvedLauncherScript"
+    Write-Host "Scan Root         : $(if ($ResolvedRoot) { $ResolvedRoot } else { $ProjectRoot })"
     Write-Host "Recursive         : $RecursiveEnabled"
     Write-Host "Device            : $Device"
     Write-Host "PDF DPI           : $PdfDpi"
@@ -242,9 +299,9 @@ try {
 
     $ArgsList = @()
 
-    if (-not [string]::IsNullOrWhiteSpace($Root)) {
+    if (-not [string]::IsNullOrWhiteSpace($ResolvedRoot)) {
         $ArgsList += "--root"
-        $ArgsList += $Root
+        $ArgsList += $ResolvedRoot
     }
 
     if ($RecursiveEnabled) {
