@@ -1,0 +1,1854 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PP-StructureV3 座標疊圖檢視器</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --panel: rgba(255, 252, 247, 0.92);
+      --panel-strong: #fffaf1;
+      --line: rgba(87, 66, 42, 0.16);
+      --text: #2f2417;
+      --muted: #74624d;
+      --accent: #a24a2f;
+      --shadow: 0 24px 60px rgba(76, 52, 28, 0.14);
+      --radius: 22px;
+      --sidebar-width: 320px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Microsoft JhengHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(255, 221, 176, 0.65), transparent 34%),
+        radial-gradient(circle at top right, rgba(38, 99, 107, 0.18), transparent 26%),
+        linear-gradient(180deg, #f6f1e9 0%, #efe5d8 100%);
+    }
+
+    .shell {
+      width: min(1500px, calc(100vw - 32px));
+      margin: 24px auto;
+      display: grid;
+      gap: 16px;
+    }
+
+    .hero,
+    .toolbar,
+    .workspace {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+
+    .hero {
+      padding: 22px 24px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-size: clamp(1.6rem, 2vw, 2.3rem);
+      line-height: 1.15;
+    }
+
+    .hero p,
+    .hero li {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .hero ul {
+      margin: 0;
+      padding-left: 20px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .toolbar {
+      padding: 18px 20px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .toolbar-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 12px;
+      align-items: center;
+    }
+
+    .toolbar-label {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .control-cluster {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 12px;
+      align-items: center;
+    }
+
+    .number-field {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 251, 244, 0.9);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .number-field input {
+      width: 88px;
+      border: 1px solid rgba(87, 66, 42, 0.18);
+      border-radius: 10px;
+      padding: 6px 8px;
+      font: inherit;
+      color: var(--text);
+      background: #fffdfa;
+    }
+
+    .helper-note {
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .button,
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      cursor: pointer;
+      background: linear-gradient(135deg, #9f4326 0%, #c96a39 100%);
+      color: #fffdf9;
+      font: inherit;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      box-shadow: 0 14px 28px rgba(159, 67, 38, 0.24);
+    }
+
+    .button:hover,
+    button:hover {
+      transform: translateY(-1px);
+    }
+
+    .button.secondary,
+    button.secondary {
+      background: linear-gradient(135deg, #236067 0%, #33838b 100%);
+      box-shadow: 0 14px 28px rgba(38, 99, 107, 0.22);
+    }
+
+    button.ghost {
+      background: rgba(255, 250, 241, 0.7);
+      color: var(--text);
+      border: 1px solid var(--line);
+      box-shadow: none;
+    }
+
+    .button input {
+      display: none;
+    }
+
+    .toggle-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      align-items: center;
+    }
+
+    .toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      user-select: none;
+    }
+
+    .slider {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      min-width: 220px;
+    }
+
+    .slider output {
+      min-width: 3ch;
+      text-align: right;
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .dropzone {
+      border: 2px dashed rgba(162, 74, 47, 0.28);
+      border-radius: 18px;
+      padding: 18px;
+      background: rgba(255, 248, 239, 0.8);
+      color: var(--muted);
+      transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+    }
+
+    .dropzone.is-over {
+      border-color: var(--accent);
+      background: rgba(255, 237, 221, 0.95);
+      transform: translateY(-1px);
+    }
+
+    .workspace {
+      min-height: 72vh;
+      display: grid;
+      grid-template-columns: minmax(260px, var(--sidebar-width)) minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(255, 247, 236, 0.92) 0%, rgba(252, 247, 241, 0.7) 100%);
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      min-height: 0;
+    }
+
+    .summary {
+      padding: 18px 18px 12px;
+      display: grid;
+      gap: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .summary strong {
+      font-size: 1.1rem;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .stat-card {
+      padding: 10px 12px;
+      border-radius: 16px;
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+    }
+
+    .stat-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-bottom: 4px;
+    }
+
+    .status-banner {
+      margin: 0 18px 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255, 251, 244, 0.92);
+      color: var(--muted);
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .file-list {
+      min-height: 0;
+      overflow: auto;
+      padding: 8px 10px 14px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .file-card {
+      width: 100%;
+      padding: 13px 14px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255, 253, 249, 0.9);
+      color: inherit;
+      text-align: left;
+      box-shadow: none;
+      display: grid;
+      gap: 8px;
+    }
+
+    .file-card.active {
+      background: linear-gradient(180deg, rgba(255, 238, 221, 0.96), rgba(255, 248, 239, 0.92));
+      border-color: rgba(162, 74, 47, 0.32);
+    }
+
+    .file-card header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .file-card strong {
+      display: block;
+      font-size: 0.96rem;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .file-card small {
+      display: block;
+      color: var(--muted);
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .badge {
+      flex: none;
+      padding: 5px 9px;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+
+    .badge.ready {
+      background: rgba(48, 125, 73, 0.14);
+      color: #24593a;
+    }
+
+    .badge.missing {
+      background: rgba(162, 74, 47, 0.12);
+      color: #8b3e24;
+    }
+
+    .badge.invalid {
+      background: rgba(159, 92, 20, 0.14);
+      color: #80501e;
+    }
+
+    .viewer {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(255, 222, 188, 0.28), transparent 28%),
+        linear-gradient(180deg, rgba(255, 250, 244, 0.92) 0%, rgba(251, 246, 239, 0.74) 100%);
+    }
+
+    .viewer-head {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 10px;
+    }
+
+    .viewer-head strong,
+    .viewer-head span {
+      display: block;
+      overflow-wrap: anywhere;
+    }
+
+    .viewer-head span {
+      color: var(--muted);
+    }
+
+    .viewer-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .viewer-stats .pill {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(255, 250, 241, 0.88);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .stage-wrap {
+      min-height: 0;
+      overflow: hidden;
+      padding: 18px;
+    }
+
+    .stage {
+      position: relative;
+      width: 100%;
+      min-height: min(68vh, 820px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 22px;
+      overflow: hidden;
+      user-select: none;
+      touch-action: none;
+      background:
+        linear-gradient(45deg, rgba(166, 142, 109, 0.14) 25%, transparent 25%, transparent 75%, rgba(166, 142, 109, 0.14) 75%),
+        linear-gradient(45deg, rgba(166, 142, 109, 0.14) 25%, transparent 25%, transparent 75%, rgba(166, 142, 109, 0.14) 75%);
+      background-position: 0 0, 12px 12px;
+      background-size: 24px 24px;
+    }
+
+    .stage.has-image {
+      cursor: grab;
+    }
+
+    .stage.is-dragging {
+      cursor: grabbing;
+    }
+
+    .canvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+
+    .canvas img {
+      display: block;
+      max-width: none;
+      width: auto;
+      height: auto;
+      border-radius: 16px;
+      box-shadow: 0 18px 46px rgba(41, 28, 17, 0.16);
+    }
+
+    .canvas svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .empty-stage {
+      padding: 40px 22px;
+      text-align: center;
+      color: var(--muted);
+      line-height: 1.7;
+      max-width: 520px;
+    }
+
+    .inspector {
+      border-top: 1px solid var(--line);
+      padding: 16px 18px 18px;
+      display: grid;
+      gap: 12px;
+      background: rgba(255, 251, 245, 0.86);
+    }
+
+    .inspector h2 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .entry-list {
+      max-height: 260px;
+      overflow: auto;
+      display: grid;
+      gap: 8px;
+    }
+
+    .entry-card {
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.8);
+      display: grid;
+      gap: 6px;
+    }
+
+    .entry-card strong,
+    .entry-card span,
+    .entry-card code {
+      overflow-wrap: anywhere;
+    }
+
+    .entry-card span {
+      color: var(--muted);
+    }
+
+    .entry-card code {
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: rgba(38, 99, 107, 0.08);
+      color: #214f55;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.78rem;
+    }
+
+    @media (max-width: 1080px) {
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .viewer {
+        min-height: 70vh;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <h1>PP-StructureV3 座標疊圖檢視器</h1>
+      <p>把同一批圖片和 OCR 產生的 <code>*.ppstructurev3.txt</code> 一起載入，就能把 V3 座標文字直接疊在圖片上看。</p>
+      <ul>
+        <li>最佳方式是直接選整個資料夾，或把整個資料夾拖進來。</li>
+        <li>如果只拖圖片，瀏覽器無法自動偷看旁邊沒選到的 TXT，這是瀏覽器的本機檔案限制。</li>
+        <li>TXT 需要是開啟 <code>PP-StructureV3 coordinate mode</code> 後輸出的格式。</li>
+      </ul>
+    </section>
+
+    <section class="toolbar">
+      <div class="toolbar-row">
+        <label class="button">
+          <input id="folderInput" type="file" webkitdirectory directory multiple>
+          選擇資料夾
+        </label>
+        <label class="button secondary">
+          <input id="fileInput" type="file" multiple accept=".jpg,.jpeg,.png,.bmp,.tif,.tiff,.webp,.txt">
+          選擇圖片與 TXT
+        </label>
+        <button id="clearButton" class="ghost" type="button">清空目前資料</button>
+      </div>
+
+      <div id="dropZone" class="dropzone" role="button" tabindex="0">
+        拖曳資料夾、圖片或 TXT 到這裡。拖資料夾時會一起讀取裡面的圖片和 <code>ppstructurev3.txt</code>。
+      </div>
+
+      <div class="toolbar-row">
+        <div class="toggle-group">
+          <label class="toggle"><input id="showTextBoxes" type="checkbox" checked>顯示文字框</label>
+          <label class="toggle"><input id="showTextLabels" type="checkbox" checked>顯示文字內容</label>
+          <label class="toggle"><input id="showLayoutBoxes" type="checkbox">顯示版面框</label>
+        </div>
+        <label class="slider">
+          字體倍率
+          <input id="fontScale" type="range" min="0.6" max="2.2" step="0.1" value="1">
+          <output id="fontScaleValue" for="fontScale">1.0x</output>
+        </label>
+        <label class="slider">
+          框線透明度
+          <input id="boxOpacity" type="range" min="0.1" max="1" step="0.05" value="0.75">
+          <output id="boxOpacityValue" for="boxOpacity">0.75</output>
+        </label>
+      </div>
+
+      <div class="toolbar-row">
+        <span class="toolbar-label">疊圖微調</span>
+        <div class="control-cluster">
+          <label class="number-field">整體縮放 <input id="overlayOverallScale" type="number" min="0.1" max="5" step="0.001" value="1"></label>
+          <label class="number-field">水平比例 <input id="overlayScaleX" type="number" min="0.1" max="5" step="0.001" value="1"></label>
+          <label class="number-field">垂直比例 <input id="overlayScaleY" type="number" min="0.1" max="5" step="0.001" value="1"></label>
+          <label class="number-field">X 位移 <input id="overlayOffsetX" type="number" min="-5000" max="5000" step="1" value="0"></label>
+          <label class="number-field">Y 位移 <input id="overlayOffsetY" type="number" min="-5000" max="5000" step="1" value="0"></label>
+          <button id="resetCalibrationButton" class="ghost" type="button">重設目前圖片校正</button>
+        </div>
+      </div>
+
+      <div class="toolbar-row">
+        <span class="helper-note">這組數值只會調整目前選取圖片的 OCR 疊圖層。通常先調整整體縮放，再補 X/Y 位移；若只有寬或高偏掉，再微調水平比例或垂直比例。</span>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <aside class="sidebar">
+        <div class="summary">
+          <strong>載入摘要</strong>
+          <div class="summary-grid">
+            <div class="stat-card">
+              <span>圖片</span>
+              <strong id="imageCount">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>已對到 TXT</span>
+              <strong id="matchedCount">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>有座標資料</span>
+              <strong id="coordinateCount">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>目前選取</span>
+              <strong id="selectedLabel">尚未選取</strong>
+            </div>
+          </div>
+        </div>
+        <div id="statusBanner" class="status-banner">尚未載入任何檔案。</div>
+        <div id="fileList" class="file-list" aria-live="polite"></div>
+      </aside>
+
+      <main class="viewer">
+        <div class="viewer-head">
+          <div>
+            <strong id="currentImagePath">尚未選取圖片</strong>
+            <span id="currentTxtPath">請先選擇資料夾或拖曳圖片與 TXT</span>
+          </div>
+          <div id="viewerStats" class="viewer-stats"></div>
+        </div>
+
+        <div class="stage-wrap">
+          <div id="stage" class="stage">
+            <div id="emptyStage" class="empty-stage">
+              載入完成後，左邊會列出圖片清單。<br>
+              點選任一張圖片，就會把同資料夾對應的 <code>ppstructurev3.txt</code> 疊到圖片上。
+            </div>
+            <div id="canvas" class="canvas" hidden>
+              <img id="previewImage" alt="" draggable="false" hidden>
+              <svg id="overlay" hidden aria-hidden="true"></svg>
+            </div>
+          </div>
+        </div>
+
+        <section class="inspector">
+          <h2>目前圖片的 OCR 項目</h2>
+          <div id="entryList" class="entry-list">
+            <div class="entry-card">
+              <span>尚未載入座標內容。</span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </section>
+  </div>
+  <script>
+    const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"]);
+    const STRUCTURE_TXT_SUFFIX = ".ppstructurev3.txt";
+    const SVG_NS = "http://www.w3.org/2000/svg";
+
+    function createDefaultCalibration() {
+      return {
+        overallScale: 1,
+        scaleX: 1,
+        scaleY: 1,
+        offsetX: 0,
+        offsetY: 0,
+      };
+    }
+
+    const state = {
+      records: [],
+      selectedIndex: -1,
+      previewUrl: null,
+      overlayOptions: {
+        showTextBoxes: true,
+        showTextLabels: true,
+        showLayoutBoxes: false,
+        fontScale: 1,
+        boxOpacity: 0.75,
+      },
+      view: {
+        scale: 1,
+        minScale: 1,
+        maxScale: 8,
+        offsetX: 0,
+        offsetY: 0,
+        imageWidth: 0,
+        imageHeight: 0,
+        isPanning: false,
+        lastPointerX: 0,
+        lastPointerY: 0,
+      },
+    };
+
+    const folderInput = document.getElementById("folderInput");
+    const fileInput = document.getElementById("fileInput");
+    const clearButton = document.getElementById("clearButton");
+    const dropZone = document.getElementById("dropZone");
+    const fileList = document.getElementById("fileList");
+    const statusBanner = document.getElementById("statusBanner");
+    const imageCount = document.getElementById("imageCount");
+    const matchedCount = document.getElementById("matchedCount");
+    const coordinateCount = document.getElementById("coordinateCount");
+    const selectedLabel = document.getElementById("selectedLabel");
+    const currentImagePath = document.getElementById("currentImagePath");
+    const currentTxtPath = document.getElementById("currentTxtPath");
+    const viewerStats = document.getElementById("viewerStats");
+    const stage = document.getElementById("stage");
+    const canvas = document.getElementById("canvas");
+    const emptyStage = document.getElementById("emptyStage");
+    const previewImage = document.getElementById("previewImage");
+    const overlay = document.getElementById("overlay");
+    const entryList = document.getElementById("entryList");
+    const showTextBoxes = document.getElementById("showTextBoxes");
+    const showTextLabels = document.getElementById("showTextLabels");
+    const showLayoutBoxes = document.getElementById("showLayoutBoxes");
+    const fontScale = document.getElementById("fontScale");
+    const fontScaleValue = document.getElementById("fontScaleValue");
+    const boxOpacity = document.getElementById("boxOpacity");
+    const boxOpacityValue = document.getElementById("boxOpacityValue");
+    const overlayOverallScale = document.getElementById("overlayOverallScale");
+    const overlayScaleX = document.getElementById("overlayScaleX");
+    const overlayScaleY = document.getElementById("overlayScaleY");
+    const overlayOffsetX = document.getElementById("overlayOffsetX");
+    const overlayOffsetY = document.getElementById("overlayOffsetY");
+    const resetCalibrationButton = document.getElementById("resetCalibrationButton");
+
+    function normalizePath(path) {
+      return String(path || "").replace(/\\/g, "/").replace(/^\.\/+/, "");
+    }
+
+    function getDirname(path) {
+      const normalized = normalizePath(path);
+      const index = normalized.lastIndexOf("/");
+      return index >= 0 ? normalized.slice(0, index) : "";
+    }
+
+    function getBasename(path) {
+      const normalized = normalizePath(path);
+      const index = normalized.lastIndexOf("/");
+      return index >= 0 ? normalized.slice(index + 1) : normalized;
+    }
+
+    function removeLastExtension(name) {
+      return name.replace(/\.[^.]+$/, "");
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function escapeRegex(value) {
+      return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+
+    function isImageFile(name) {
+      const lowerName = String(name || "").toLowerCase();
+      for (const ext of IMAGE_EXTENSIONS) {
+        if (lowerName.endsWith(ext)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function isStructureTxt(name) {
+      return String(name || "").toLowerCase().endsWith(STRUCTURE_TXT_SUFFIX);
+    }
+
+    function normalizePolygon(coordinate) {
+      if (!Array.isArray(coordinate) || coordinate.length === 0) {
+        return null;
+      }
+
+      if (
+        coordinate.every(
+          (point) =>
+            Array.isArray(point) &&
+            point.length >= 2 &&
+            Number.isFinite(Number(point[0])) &&
+            Number.isFinite(Number(point[1]))
+        )
+      ) {
+        return coordinate.map((point) => [Number(point[0]), Number(point[1])]);
+      }
+
+      if (coordinate.every((value) => Number.isFinite(Number(value)))) {
+        const numbers = coordinate.map((value) => Number(value));
+        if (numbers.length === 4) {
+          const [x1, y1, x2, y2] = numbers;
+          return [
+            [x1, y1],
+            [x2, y1],
+            [x2, y2],
+            [x1, y2],
+          ];
+        }
+        if (numbers.length >= 6 && numbers.length % 2 === 0) {
+          const points = [];
+          for (let index = 0; index < numbers.length; index += 2) {
+            points.push([numbers[index], numbers[index + 1]]);
+          }
+          return points;
+        }
+      }
+
+      return null;
+    }
+
+    function polygonBounds(points) {
+      const xs = points.map((point) => point[0]);
+      const ys = points.map((point) => point[1]);
+      return {
+        minX: Math.min(...xs),
+        maxX: Math.max(...xs),
+        minY: Math.min(...ys),
+        maxY: Math.max(...ys),
+      };
+    }
+
+    function extractBalancedBracketJson(text) {
+      const source = String(text || "").trimStart();
+      if (!source.startsWith("[")) {
+        return null;
+      }
+
+      let depth = 0;
+      for (let index = 0; index < source.length; index += 1) {
+        const char = source[index];
+        if (char === "[") {
+          depth += 1;
+        } else if (char === "]") {
+          depth -= 1;
+          if (depth === 0) {
+            return {
+              jsonText: source.slice(0, index + 1),
+              remainder: source.slice(index + 1).trim(),
+            };
+          }
+        }
+      }
+
+      return null;
+    }
+
+    function parseCoordinateLine(line, currentPage) {
+      const textMatch = line.match(/^\[TEXT\]\[score=([^\]]+)\]\s+/);
+      if (textMatch) {
+        const balanced = extractBalancedBracketJson(line.slice(textMatch[0].length));
+        if (!balanced) {
+          return null;
+        }
+        try {
+          const coordinate = JSON.parse(balanced.jsonText);
+          return {
+            type: "text",
+            page: currentPage,
+            score: Number.parseFloat(textMatch[1]),
+            text: balanced.remainder,
+            coordinate,
+            polygon: normalizePolygon(coordinate),
+          };
+        } catch (error) {
+          return null;
+        }
+      }
+
+      const layoutMatch = line.match(/^\[LAYOUT\]\[([^\]]+)\]\[score=([^\]]+)\]\s+/);
+      if (layoutMatch) {
+        const balanced = extractBalancedBracketJson(line.slice(layoutMatch[0].length));
+        if (!balanced) {
+          return null;
+        }
+        try {
+          const coordinate = JSON.parse(balanced.jsonText);
+          return {
+            type: "layout",
+            page: currentPage,
+            label: layoutMatch[1],
+            score: Number.parseFloat(layoutMatch[2]),
+            coordinate,
+            polygon: normalizePolygon(coordinate),
+          };
+        } catch (error) {
+          return null;
+        }
+      }
+
+      return null;
+    }
+
+    function parseStructureTxt(content) {
+      const lines = String(content || "").split(/\r?\n/);
+      const entries = [];
+      const pages = new Set();
+      let currentPage = null;
+      let ignoredLines = 0;
+
+      for (const rawLine of lines) {
+        const line = rawLine.trim();
+        if (!line) {
+          continue;
+        }
+
+        const pageMatch = line.match(/^===== PAGE (\d+) =====$/);
+        if (pageMatch) {
+          currentPage = Number.parseInt(pageMatch[1], 10);
+          pages.add(currentPage);
+          continue;
+        }
+
+        const entry = parseCoordinateLine(line, currentPage);
+        if (entry && entry.polygon) {
+          entries.push(entry);
+          continue;
+        }
+
+        ignoredLines += 1;
+      }
+
+      const textEntries = entries.filter((entry) => entry.type === "text");
+      const layoutEntries = entries.filter((entry) => entry.type === "layout");
+      return {
+        entries,
+        textEntries,
+        layoutEntries,
+        pageCount: pages.size,
+        ignoredLines,
+        hasCoordinateData: entries.length > 0,
+      };
+    }
+
+    function chooseMatchingTxt(imageRecord, txtCandidates) {
+      if (!txtCandidates || txtCandidates.length === 0) {
+        return null;
+      }
+
+      const baseName = removeLastExtension(imageRecord.file.name);
+      const exactName = `${baseName}.ppstructurev3.txt`;
+      const exactMatch = txtCandidates.find((item) => item.file.name.toLowerCase() === exactName.toLowerCase());
+      if (exactMatch) {
+        return exactMatch;
+      }
+
+      const suffix = `__${baseName}.ppstructurev3.txt`.toLowerCase();
+      const suffixMatches = txtCandidates.filter((item) => item.file.name.toLowerCase().endsWith(suffix));
+      if (suffixMatches.length === 1) {
+        return suffixMatches[0];
+      }
+
+      const broadPattern = new RegExp(`(?:^|__)${escapeRegex(baseName)}\\.ppstructurev3\\.txt$`, "i");
+      const broadMatches = txtCandidates.filter((item) => broadPattern.test(item.file.name));
+      if (broadMatches.length === 1) {
+        return broadMatches[0];
+      }
+
+      return null;
+    }
+
+    function wrapFileList(fileListLike) {
+      return Array.from(fileListLike || []).map((file) => ({
+        file,
+        relativePath: normalizePath(file.webkitRelativePath || file.name),
+      }));
+    }
+
+    async function readDirectoryEntries(reader) {
+      const entries = [];
+      while (true) {
+        const batch = await new Promise((resolve, reject) => {
+          reader.readEntries(resolve, reject);
+        });
+        if (!batch.length) {
+          return entries;
+        }
+        entries.push(...batch);
+      }
+    }
+
+    async function traverseDroppedEntry(entry, parentPath = "") {
+      if (entry.isFile) {
+        const file = await new Promise((resolve, reject) => {
+          entry.file(resolve, reject);
+        });
+        return [
+          {
+            file,
+            relativePath: normalizePath(`${parentPath}${file.name}`),
+          },
+        ];
+      }
+
+      if (!entry.isDirectory) {
+        return [];
+      }
+
+      const nextParent = `${parentPath}${entry.name}/`;
+      const reader = entry.createReader();
+      const children = await readDirectoryEntries(reader);
+      const collected = [];
+      for (const child of children) {
+        collected.push(...(await traverseDroppedEntry(child, nextParent)));
+      }
+      return collected;
+    }
+
+    async function collectDroppedItems(dataTransfer) {
+      const items = Array.from(dataTransfer.items || []);
+      const supportsEntry = items.some((item) => typeof item.webkitGetAsEntry === "function");
+      if (!supportsEntry) {
+        return wrapFileList(dataTransfer.files);
+      }
+
+      const collected = [];
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry();
+        if (!entry) {
+          continue;
+        }
+        collected.push(...(await traverseDroppedEntry(entry)));
+      }
+
+      return collected;
+    }
+
+    function dedupeWrappedFiles(wrappedFiles) {
+      const seen = new Map();
+      for (const item of wrappedFiles) {
+        const relativePath = normalizePath(item.relativePath || item.file.name);
+        seen.set(relativePath.toLowerCase(), {
+          file: item.file,
+          relativePath,
+        });
+      }
+      return Array.from(seen.values());
+    }
+
+    function buildRecords(wrappedFiles) {
+      const files = dedupeWrappedFiles(wrappedFiles);
+      const txtByDir = new Map();
+      const images = [];
+
+      for (const wrapped of files) {
+        const relativePath = normalizePath(wrapped.relativePath || wrapped.file.name);
+        const dirname = getDirname(relativePath);
+        const record = {
+          file: wrapped.file,
+          relativePath,
+          dirname,
+        };
+
+        if (isImageFile(wrapped.file.name)) {
+          images.push(record);
+        } else if (isStructureTxt(wrapped.file.name)) {
+          const bucket = txtByDir.get(dirname) || [];
+          bucket.push(record);
+          txtByDir.set(dirname, bucket);
+        }
+      }
+
+      images.sort((left, right) =>
+        left.relativePath.localeCompare(right.relativePath, "zh-Hant", { numeric: true, sensitivity: "base" })
+      );
+
+      return images.map((image) => {
+        const txtMatch = chooseMatchingTxt(image, txtByDir.get(image.dirname) || []);
+        return {
+          image,
+          txt: txtMatch,
+          parsed: null,
+          parseError: "",
+          calibration: createDefaultCalibration(),
+        };
+      });
+    }
+
+    async function parseRecord(record) {
+      if (!record || record.parsed || record.parseError) {
+        return;
+      }
+
+      if (!record.txt) {
+        record.parseError = "同資料夾沒有對應的 ppstructurev3 TXT。";
+        return;
+      }
+
+      try {
+        const content = await record.txt.file.text();
+        record.parsed = parseStructureTxt(content);
+        if (!record.parsed.hasCoordinateData) {
+          record.parseError = "找到 TXT，但內容不是 V3 座標模式。請重新 OCR 並開啟 coordinate mode。";
+        }
+      } catch (error) {
+        record.parseError = `讀取 TXT 失敗：${error instanceof Error ? error.message : String(error)}`;
+      }
+    }
+
+    function ensureRecordCalibration(record) {
+      if (!record) {
+        return createDefaultCalibration();
+      }
+      if (!record.calibration) {
+        record.calibration = createDefaultCalibration();
+      }
+      return record.calibration;
+    }
+
+    function getCurrentRecord() {
+      return state.records[state.selectedIndex] || null;
+    }
+
+    function getCurrentCalibration() {
+      const record = getCurrentRecord();
+      return ensureRecordCalibration(record);
+    }
+
+    function clampCalibrationValue(value, fallback, min, max) {
+      const parsed = Number.parseFloat(value);
+      if (!Number.isFinite(parsed)) {
+        return fallback;
+      }
+      return Math.min(max, Math.max(min, parsed));
+    }
+
+    function syncCalibrationControls(record) {
+      const calibration = ensureRecordCalibration(record);
+      overlayOverallScale.value = calibration.overallScale.toFixed(3);
+      overlayScaleX.value = calibration.scaleX.toFixed(3);
+      overlayScaleY.value = calibration.scaleY.toFixed(3);
+      overlayOffsetX.value = String(Math.round(calibration.offsetX));
+      overlayOffsetY.value = String(Math.round(calibration.offsetY));
+    }
+
+    function updateCurrentCalibrationFromControls() {
+      const record = getCurrentRecord();
+      if (!record) {
+        syncCalibrationControls(null);
+        return;
+      }
+
+      const calibration = ensureRecordCalibration(record);
+      calibration.overallScale = clampCalibrationValue(overlayOverallScale.value, calibration.overallScale, 0.1, 5);
+      calibration.scaleX = clampCalibrationValue(overlayScaleX.value, calibration.scaleX, 0.1, 5);
+      calibration.scaleY = clampCalibrationValue(overlayScaleY.value, calibration.scaleY, 0.1, 5);
+      calibration.offsetX = clampCalibrationValue(overlayOffsetX.value, calibration.offsetX, -5000, 5000);
+      calibration.offsetY = clampCalibrationValue(overlayOffsetY.value, calibration.offsetY, -5000, 5000);
+      syncCalibrationControls(record);
+      renderOverlay(record);
+      renderCalibrationPill(record);
+    }
+
+    function setStatus(message) {
+      statusBanner.textContent = message;
+    }
+
+    function updateSummary() {
+      imageCount.textContent = String(state.records.length);
+      matchedCount.textContent = String(state.records.filter((record) => Boolean(record.txt)).length);
+      coordinateCount.textContent = String(
+        state.records.filter((record) => record.parsed && record.parsed.hasCoordinateData).length
+      );
+
+      if (state.selectedIndex < 0 || !state.records[state.selectedIndex]) {
+        selectedLabel.textContent = "尚未選取";
+      } else {
+        selectedLabel.textContent = getBasename(state.records[state.selectedIndex].image.relativePath);
+      }
+    }
+
+    function cardBadge(record) {
+      if (!record.txt) {
+        return '<span class="badge missing">無 TXT</span>';
+      }
+      if (record.parsed && record.parsed.hasCoordinateData) {
+        return '<span class="badge ready">有座標</span>';
+      }
+      if (record.parseError) {
+        return '<span class="badge invalid">TXT 無座標</span>';
+      }
+      return '<span class="badge ready">已對到 TXT</span>';
+    }
+
+    function renderFileList() {
+      if (!state.records.length) {
+        fileList.innerHTML = "";
+        return;
+      }
+
+      fileList.innerHTML = state.records
+        .map((record, index) => {
+          const activeClass = index === state.selectedIndex ? " active" : "";
+          const note = record.txt
+            ? record.txt.relativePath
+            : "沒有找到同資料夾的 ppstructurev3 TXT";
+          return `
+            <button type="button" class="file-card${activeClass}" data-index="${index}">
+              <header>
+                <div>
+                  <strong>${escapeHtml(record.image.file.name)}</strong>
+                  <small>${escapeHtml(record.image.relativePath)}</small>
+                </div>
+                ${cardBadge(record)}
+              </header>
+              <small>${escapeHtml(note)}</small>
+            </button>
+          `;
+        })
+        .join("");
+    }
+
+    function renderViewerStats(record) {
+      if (!record) {
+        viewerStats.innerHTML = "";
+        return;
+      }
+
+      const pills = [];
+      pills.push(`<span class="pill">圖片：${escapeHtml(record.image.file.name)}</span>`);
+      if (record.txt) {
+        pills.push(`<span class="pill">TXT：${escapeHtml(record.txt.file.name)}</span>`);
+      } else {
+        pills.push('<span class="pill">TXT：未找到</span>');
+      }
+
+      if (record.parsed && record.parsed.hasCoordinateData) {
+        pills.push(`<span class="pill">文字框：${record.parsed.textEntries.length}</span>`);
+        pills.push(`<span class="pill">版面框：${record.parsed.layoutEntries.length}</span>`);
+        if (record.parsed.pageCount > 0) {
+          pills.push(`<span class="pill">頁數標記：${record.parsed.pageCount}</span>`);
+        }
+      } else if (record.parseError) {
+        pills.push(`<span class="pill">${escapeHtml(record.parseError)}</span>`);
+      }
+
+      viewerStats.innerHTML = pills.join("");
+      renderViewPill();
+      renderCalibrationPill(record);
+    }
+
+    function renderEntryList(record) {
+      if (!record) {
+        entryList.innerHTML = `
+          <div class="entry-card">
+            <span>尚未選取圖片。</span>
+          </div>
+        `;
+        return;
+      }
+
+      if (!record.parsed || !record.parsed.hasCoordinateData) {
+        const message = record.parseError || "目前沒有可顯示的座標項目。";
+        entryList.innerHTML = `
+          <div class="entry-card">
+            <span>${escapeHtml(message)}</span>
+          </div>
+        `;
+        return;
+      }
+
+      entryList.innerHTML = record.parsed.entries
+        .map((entry) => {
+          const label =
+            entry.type === "text"
+              ? escapeHtml(entry.text || "(空白文字)")
+              : `[LAYOUT] ${escapeHtml(entry.label || "unknown")}`;
+          const score = Number.isFinite(entry.score) ? entry.score.toFixed(4) : "n/a";
+          const pageText = entry.page ? `Page ${entry.page}` : "單頁圖片";
+          const coordinate = escapeHtml(JSON.stringify(entry.coordinate));
+          return `
+            <div class="entry-card">
+              <strong>${label}</strong>
+              <span>${pageText} | score ${score}</span>
+              <code>${coordinate}</code>
+            </div>
+          `;
+        })
+        .join("");
+    }
+
+    function clearOverlay() {
+      overlay.innerHTML = "";
+    }
+
+    function resetViewState() {
+      state.view.scale = 1;
+      state.view.minScale = 1;
+      state.view.maxScale = 8;
+      state.view.offsetX = 0;
+      state.view.offsetY = 0;
+      state.view.imageWidth = 0;
+      state.view.imageHeight = 0;
+      state.view.isPanning = false;
+      state.view.lastPointerX = 0;
+      state.view.lastPointerY = 0;
+      canvas.style.transform = "translate(0px, 0px) scale(1)";
+      stage.classList.remove("has-image", "is-dragging");
+    }
+
+    function releasePreviewUrl() {
+      if (state.previewUrl) {
+        URL.revokeObjectURL(state.previewUrl);
+        state.previewUrl = null;
+      }
+    }
+
+    function makeSvgElement(name, attributes = {}) {
+      const element = document.createElementNS(SVG_NS, name);
+      for (const [key, value] of Object.entries(attributes)) {
+        element.setAttribute(key, String(value));
+      }
+      return element;
+    }
+
+    function truncatedOverlayText(value) {
+      const text = String(value || "").trim();
+      if (text.length <= 52) {
+        return text;
+      }
+      return `${text.slice(0, 49)}...`;
+    }
+
+    function getEffectiveOverlayScale(calibration) {
+      return {
+        x: calibration.overallScale * calibration.scaleX,
+        y: calibration.overallScale * calibration.scaleY,
+      };
+    }
+
+    function transformPointWithCalibration(point, calibration) {
+      const scale = getEffectiveOverlayScale(calibration);
+      return [
+        point[0] * scale.x + calibration.offsetX,
+        point[1] * scale.y + calibration.offsetY,
+      ];
+    }
+
+    function transformPolygonWithCalibration(points, calibration) {
+      return points.map((point) => transformPointWithCalibration(point, calibration));
+    }
+
+    function hasRenderableImage() {
+      return state.view.imageWidth > 0 && state.view.imageHeight > 0 && !canvas.hidden;
+    }
+
+    function getViewportSize() {
+      return {
+        width: Math.max(stage.clientWidth, 1),
+        height: Math.max(stage.clientHeight, 1),
+      };
+    }
+
+    function clampOffsets(offsetX, offsetY, scale = state.view.scale) {
+      const viewport = getViewportSize();
+      const scaledWidth = state.view.imageWidth * scale;
+      const scaledHeight = state.view.imageHeight * scale;
+
+      let nextX = offsetX;
+      let nextY = offsetY;
+
+      if (scaledWidth <= viewport.width) {
+        nextX = (viewport.width - scaledWidth) / 2;
+      } else {
+        nextX = Math.min(0, Math.max(viewport.width - scaledWidth, nextX));
+      }
+
+      if (scaledHeight <= viewport.height) {
+        nextY = (viewport.height - scaledHeight) / 2;
+      } else {
+        nextY = Math.min(0, Math.max(viewport.height - scaledHeight, nextY));
+      }
+
+      return { offsetX: nextX, offsetY: nextY };
+    }
+
+    function updateViewTransform() {
+      const clamped = clampOffsets(state.view.offsetX, state.view.offsetY, state.view.scale);
+      state.view.offsetX = clamped.offsetX;
+      state.view.offsetY = clamped.offsetY;
+      canvas.style.transform = `translate(${state.view.offsetX}px, ${state.view.offsetY}px) scale(${state.view.scale})`;
+      renderViewPill();
+    }
+
+    function fitCurrentImage() {
+      if (!hasRenderableImage()) {
+        return;
+      }
+
+      const viewport = getViewportSize();
+      const fitScale = Math.min(
+        viewport.width / state.view.imageWidth,
+        viewport.height / state.view.imageHeight,
+        1
+      );
+
+      state.view.scale = fitScale;
+      state.view.minScale = Math.max(fitScale * 0.35, 0.05);
+      state.view.maxScale = Math.max(fitScale * 8, 8);
+      state.view.offsetX = (viewport.width - state.view.imageWidth * fitScale) / 2;
+      state.view.offsetY = (viewport.height - state.view.imageHeight * fitScale) / 2;
+      updateViewTransform();
+    }
+
+    function zoomAtPoint(clientX, clientY, factor) {
+      if (!hasRenderableImage()) {
+        return;
+      }
+
+      const rect = stage.getBoundingClientRect();
+      const pointerX = clientX - rect.left;
+      const pointerY = clientY - rect.top;
+      const previousScale = state.view.scale;
+      const nextScale = Math.min(
+        state.view.maxScale,
+        Math.max(state.view.minScale, previousScale * factor)
+      );
+
+      if (Math.abs(nextScale - previousScale) < 0.0001) {
+        return;
+      }
+
+      const imageX = (pointerX - state.view.offsetX) / previousScale;
+      const imageY = (pointerY - state.view.offsetY) / previousScale;
+
+      state.view.scale = nextScale;
+      state.view.offsetX = pointerX - imageX * nextScale;
+      state.view.offsetY = pointerY - imageY * nextScale;
+      updateViewTransform();
+    }
+
+    function endPanning() {
+      state.view.isPanning = false;
+      stage.classList.remove("is-dragging");
+    }
+
+    function renderViewPill() {
+      const existing = viewerStats.querySelector('[data-view-pill="scale"]');
+      if (existing) {
+        existing.remove();
+      }
+
+      if (!hasRenderableImage()) {
+        return;
+      }
+
+      const pill = document.createElement("span");
+      pill.className = "pill";
+      pill.dataset.viewPill = "scale";
+      pill.textContent = `檢視 ${Math.round(state.view.scale * 100)}% | 滾輪縮放 | 拖曳平移 | 雙擊重置`;
+      viewerStats.appendChild(pill);
+    }
+
+    function renderCalibrationPill(record = getCurrentRecord()) {
+      const existing = viewerStats.querySelector('[data-view-pill="calibration"]');
+      if (existing) {
+        existing.remove();
+      }
+
+      if (!record) {
+        return;
+      }
+
+      const calibration = ensureRecordCalibration(record);
+      const pill = document.createElement("span");
+      pill.className = "pill";
+      pill.dataset.viewPill = "calibration";
+      pill.textContent =
+        `校正 總=${calibration.overallScale.toFixed(3)} ` +
+        `寬=${calibration.scaleX.toFixed(3)} 高=${calibration.scaleY.toFixed(3)} ` +
+        `位移=(${Math.round(calibration.offsetX)}, ${Math.round(calibration.offsetY)})`;
+      viewerStats.appendChild(pill);
+    }
+
+    function renderOverlay(record) {
+      clearOverlay();
+
+      if (!record || !record.parsed || !record.parsed.hasCoordinateData) {
+        return;
+      }
+
+      const fontMultiplier = state.overlayOptions.fontScale;
+      const opacity = state.overlayOptions.boxOpacity;
+      const calibration = ensureRecordCalibration(record);
+
+      for (const entry of record.parsed.entries) {
+        const isText = entry.type === "text";
+        if (isText && !state.overlayOptions.showTextBoxes && !state.overlayOptions.showTextLabels) {
+          continue;
+        }
+        if (!isText && !state.overlayOptions.showLayoutBoxes) {
+          continue;
+        }
+
+        const transformedPolygon = transformPolygonWithCalibration(entry.polygon, calibration);
+        const bounds = polygonBounds(transformedPolygon);
+        const boxHeight = Math.max(18, bounds.maxY - bounds.minY);
+        const fontSize = Math.max(14, Math.min(34, boxHeight * 0.42 * fontMultiplier));
+        const textX = bounds.minX;
+        const textY = bounds.minY > fontSize + 8 ? bounds.minY - 6 : bounds.minY + fontSize + 4;
+
+        const group = makeSvgElement("g");
+        const polygon = makeSvgElement("polygon", {
+          points: transformedPolygon.map((point) => `${point[0]},${point[1]}`).join(" "),
+          fill: isText ? `rgba(235, 87, 87, ${0.14 * opacity})` : `rgba(43, 126, 138, ${0.10 * opacity})`,
+          stroke: isText ? `rgba(216, 52, 52, ${opacity})` : `rgba(38, 99, 107, ${opacity})`,
+          "stroke-width": isText ? 2.2 : 1.7,
+          "stroke-dasharray": isText ? "0" : "8 5",
+        });
+        const title = makeSvgElement("title");
+        title.textContent =
+          entry.type === "text"
+            ? `${entry.text || ""}\nscore=${Number.isFinite(entry.score) ? entry.score.toFixed(4) : "n/a"}`
+            : `[LAYOUT] ${entry.label || "unknown"}\nscore=${
+                Number.isFinite(entry.score) ? entry.score.toFixed(4) : "n/a"
+              }`;
+        group.appendChild(polygon);
+        group.appendChild(title);
+
+        if ((isText && state.overlayOptions.showTextLabels) || (!isText && state.overlayOptions.showLayoutBoxes)) {
+          const labelText = isText ? truncatedOverlayText(entry.text) : `[${entry.label || "unknown"}]`;
+          const backgroundWidth = Math.max(fontSize * 3.2, labelText.length * fontSize * 0.55);
+          const background = makeSvgElement("rect", {
+            x: textX - 3,
+            y: textY - fontSize + 2,
+            width: backgroundWidth,
+            height: fontSize + 8,
+            rx: 8,
+            fill: isText ? "rgba(255, 248, 236, 0.84)" : "rgba(235, 248, 250, 0.82)",
+            stroke: isText ? "rgba(216, 52, 52, 0.35)" : "rgba(38, 99, 107, 0.28)",
+          });
+          const text = makeSvgElement("text", {
+            x: textX + 3,
+            y: textY,
+            fill: isText ? "#5b180f" : "#173d42",
+            "font-size": fontSize,
+            "font-family": "Segoe UI, Microsoft JhengHei, sans-serif",
+            "font-weight": isText ? 700 : 600,
+          });
+          text.textContent = labelText;
+          group.appendChild(background);
+          group.appendChild(text);
+        }
+
+        overlay.appendChild(group);
+      }
+    }
+
+    function showEmptyViewer(message) {
+      releasePreviewUrl();
+      resetViewState();
+      canvas.hidden = true;
+      previewImage.hidden = true;
+      overlay.hidden = true;
+      clearOverlay();
+      emptyStage.hidden = false;
+      emptyStage.innerHTML = message;
+      currentImagePath.textContent = "尚未選取圖片";
+      currentTxtPath.textContent = "請先選擇資料夾或拖曳圖片與 TXT";
+      renderViewerStats(null);
+      renderEntryList(null);
+    }
+
+    async function selectRecord(index) {
+      if (index < 0 || index >= state.records.length) {
+        state.selectedIndex = -1;
+        updateSummary();
+        renderFileList();
+        syncCalibrationControls(null);
+        showEmptyViewer("目前沒有可顯示的圖片。");
+        return;
+      }
+
+      state.selectedIndex = index;
+      const record = state.records[index];
+      syncCalibrationControls(record);
+      updateSummary();
+      renderFileList();
+
+      currentImagePath.textContent = record.image.relativePath;
+      currentTxtPath.textContent = record.txt
+        ? record.txt.relativePath
+        : "同資料夾沒有找到對應的 ppstructurev3 TXT";
+
+      await parseRecord(record);
+      updateSummary();
+      renderFileList();
+      renderViewerStats(record);
+      renderEntryList(record);
+
+      releasePreviewUrl();
+      resetViewState();
+      state.previewUrl = URL.createObjectURL(record.image.file);
+      previewImage.src = state.previewUrl;
+      canvas.hidden = false;
+      previewImage.hidden = false;
+      overlay.hidden = false;
+      emptyStage.hidden = true;
+      stage.classList.add("has-image");
+
+      await new Promise((resolve) => {
+        if (previewImage.complete) {
+          resolve();
+          return;
+        }
+        previewImage.onload = () => resolve();
+        previewImage.onerror = () => resolve();
+      });
+
+      if (previewImage.naturalWidth > 0 && previewImage.naturalHeight > 0) {
+        state.view.imageWidth = previewImage.naturalWidth;
+        state.view.imageHeight = previewImage.naturalHeight;
+        canvas.style.width = `${previewImage.naturalWidth}px`;
+        canvas.style.height = `${previewImage.naturalHeight}px`;
+        overlay.setAttribute("viewBox", `0 0 ${previewImage.naturalWidth} ${previewImage.naturalHeight}`);
+        overlay.setAttribute("width", `${previewImage.naturalWidth}`);
+        overlay.setAttribute("height", `${previewImage.naturalHeight}`);
+        renderOverlay(record);
+        fitCurrentImage();
+      } else {
+        clearOverlay();
+      }
+    }
+
+    async function warmParseRecords() {
+      for (let index = 0; index < state.records.length; index += 1) {
+        await parseRecord(state.records[index]);
+        if (index === state.selectedIndex) {
+          renderViewerStats(state.records[index]);
+          renderEntryList(state.records[index]);
+          renderOverlay(state.records[index]);
+        }
+        updateSummary();
+        renderFileList();
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
+      }
+    }
+
+    async function loadWrappedFiles(wrappedFiles) {
+      state.records = buildRecords(wrappedFiles);
+      state.selectedIndex = -1;
+      updateSummary();
+      renderFileList();
+
+      if (!state.records.length) {
+        setStatus("沒有找到可用的圖片。請至少載入 JPG / PNG / BMP / TIFF / WEBP 圖片。");
+        showEmptyViewer("沒有找到可顯示的圖片。<br>請重新載入資料夾，或拖入圖片與對應 TXT。");
+        return;
+      }
+
+      setStatus(
+        [
+          `已載入 ${state.records.length} 張圖片。`,
+          "左邊清單會顯示哪些圖片已對到 TXT。",
+          "如果狀態是「TXT 無座標」，代表那份 TXT 不是用 V3 coordinate mode 產生的。",
+        ].join("\n")
+      );
+
+      await selectRecord(0);
+      void warmParseRecords();
+    }
+
+    function clearAll() {
+      state.records = [];
+      state.selectedIndex = -1;
+      syncCalibrationControls(null);
+      updateSummary();
+      renderFileList();
+      setStatus("尚未載入任何檔案。");
+      showEmptyViewer(
+        '載入完成後，左邊會列出圖片清單。<br>點選任一張圖片，就會把同資料夾對應的 <code>ppstructurev3.txt</code> 疊到圖片上。'
+      );
+      folderInput.value = "";
+      fileInput.value = "";
+    }
+
+    function refreshCurrentOverlay() {
+      const record = state.records[state.selectedIndex];
+      if (record) {
+        renderOverlay(record);
+      }
+    }
+
+    folderInput.addEventListener("change", async (event) => {
+      await loadWrappedFiles(wrapFileList(event.target.files));
+    });
+
+    fileInput.addEventListener("change", async (event) => {
+      await loadWrappedFiles(wrapFileList(event.target.files));
+    });
+
+    clearButton.addEventListener("click", () => {
+      clearAll();
+    });
+
+    fileList.addEventListener("click", async (event) => {
+      const button = event.target.closest(".file-card");
+      if (!button) {
+        return;
+      }
+      const index = Number.parseInt(button.dataset.index || "", 10);
+      if (!Number.isInteger(index)) {
+        return;
+      }
+      await selectRecord(index);
+    });
+
+    for (const [element, key] of [
+      [showTextBoxes, "showTextBoxes"],
+      [showTextLabels, "showTextLabels"],
+      [showLayoutBoxes, "showLayoutBoxes"],
+    ]) {
+      element.addEventListener("change", () => {
+        state.overlayOptions[key] = element.checked;
+        refreshCurrentOverlay();
+      });
+    }
+
+    fontScale.addEventListener("input", () => {
+      state.overlayOptions.fontScale = Number.parseFloat(fontScale.value);
+      fontScaleValue.value = `${state.overlayOptions.fontScale.toFixed(1)}x`;
+      refreshCurrentOverlay();
+    });
+
+    boxOpacity.addEventListener("input", () => {
+      state.overlayOptions.boxOpacity = Number.parseFloat(boxOpacity.value);
+      boxOpacityValue.value = state.overlayOptions.boxOpacity.toFixed(2);
+      refreshCurrentOverlay();
+    });
+
+    [overlayOverallScale, overlayScaleX, overlayScaleY, overlayOffsetX, overlayOffsetY].forEach((element) => {
+      element.addEventListener("input", () => {
+        updateCurrentCalibrationFromControls();
+      });
+      element.addEventListener("change", () => {
+        updateCurrentCalibrationFromControls();
+      });
+    });
+
+    resetCalibrationButton.addEventListener("click", () => {
+      const record = getCurrentRecord();
+      if (!record) {
+        syncCalibrationControls(null);
+        return;
+      }
+      record.calibration = createDefaultCalibration();
+      syncCalibrationControls(record);
+      renderOverlay(record);
+      renderCalibrationPill(record);
+    });
+
+    async function handleDrop(event) {
+      event.preventDefault();
+      dropZone.classList.remove("is-over");
+      const wrappedFiles = await collectDroppedItems(event.dataTransfer);
+      await loadWrappedFiles(wrappedFiles);
+    }
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropZone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropZone.classList.add("is-over");
+      });
+    });
+
+    ["dragleave", "dragend", "drop"].forEach((eventName) => {
+      dropZone.addEventListener(eventName, () => {
+        if (eventName !== "drop") {
+          dropZone.classList.remove("is-over");
+        }
+      });
+    });
+
+    dropZone.addEventListener("drop", (event) => {
+      void handleDrop(event);
+    });
+
+    ["dragover", "drop"].forEach((eventName) => {
+      document.addEventListener(eventName, (event) => {
+        if (!dropZone.contains(event.target)) {
+          event.preventDefault();
+        }
+      });
+    });
+
+    dropZone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        folderInput.click();
+      }
+    });
+
+    stage.addEventListener(
+      "wheel",
+      (event) => {
+        if (!hasRenderableImage()) {
+          return;
+        }
+        event.preventDefault();
+        const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+        zoomAtPoint(event.clientX, event.clientY, factor);
+      },
+      { passive: false }
+    );
+
+    stage.addEventListener("pointerdown", (event) => {
+      if (!hasRenderableImage() || event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      state.view.isPanning = true;
+      state.view.lastPointerX = event.clientX;
+      state.view.lastPointerY = event.clientY;
+      stage.classList.add("is-dragging");
+      try {
+        stage.setPointerCapture(event.pointerId);
+      } catch (error) {
+        // Ignore environments that do not support pointer capture.
+      }
+    });
+
+    stage.addEventListener("pointermove", (event) => {
+      if (!state.view.isPanning) {
+        return;
+      }
+      const deltaX = event.clientX - state.view.lastPointerX;
+      const deltaY = event.clientY - state.view.lastPointerY;
+      state.view.lastPointerX = event.clientX;
+      state.view.lastPointerY = event.clientY;
+      state.view.offsetX += deltaX;
+      state.view.offsetY += deltaY;
+      updateViewTransform();
+    });
+
+    ["pointerup", "pointercancel"].forEach((eventName) => {
+      stage.addEventListener(eventName, () => {
+        endPanning();
+      });
+    });
+
+    stage.addEventListener("dblclick", () => {
+      fitCurrentImage();
+    });
+
+    previewImage.addEventListener("load", () => {
+      const record = state.records[state.selectedIndex];
+      if (!record || previewImage.naturalWidth <= 0 || previewImage.naturalHeight <= 0) {
+        return;
+      }
+      state.view.imageWidth = previewImage.naturalWidth;
+      state.view.imageHeight = previewImage.naturalHeight;
+      canvas.style.width = `${previewImage.naturalWidth}px`;
+      canvas.style.height = `${previewImage.naturalHeight}px`;
+      overlay.setAttribute("viewBox", `0 0 ${previewImage.naturalWidth} ${previewImage.naturalHeight}`);
+      overlay.setAttribute("width", `${previewImage.naturalWidth}`);
+      overlay.setAttribute("height", `${previewImage.naturalHeight}`);
+      renderOverlay(record);
+      fitCurrentImage();
+    });
+
+    window.addEventListener("resize", () => {
+      fitCurrentImage();
+    });
+
+    clearAll();
+  </script>
+</body>
+</html>

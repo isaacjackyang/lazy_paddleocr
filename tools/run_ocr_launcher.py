@@ -602,6 +602,65 @@ def extract_structure_texts(result: Any, payload: dict[str, Any], score_thresh: 
     return dedupe_keep_order(texts)
 
 
+def simplify_coordinate_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): simplify_coordinate_value(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [simplify_coordinate_value(item) for item in value]
+
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return value
+
+    rounded = round(number, 2)
+    if rounded.is_integer():
+        return int(rounded)
+    return rounded
+
+
+def extract_structure_coordinate_entries(payload: dict[str, Any], score_thresh: float) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+
+    overall_ocr_res = payload.get("overall_ocr_res")
+    if isinstance(overall_ocr_res, dict):
+        texts = overall_ocr_res.get("rec_texts", []) or []
+        scores = overall_ocr_res.get("rec_scores", []) or []
+        polys = overall_ocr_res.get("rec_polys", []) or []
+
+        for index, text in enumerate(texts):
+            normalized_text = str(text).strip()
+            score = float(scores[index]) if index < len(scores) else 0.0
+            if not normalized_text or score < score_thresh:
+                continue
+
+            entry: dict[str, Any] = {
+                "type": "text",
+                "text": normalized_text,
+                "score": round(score, 4),
+            }
+            if index < len(polys) and polys[index] is not None:
+                entry["coordinate"] = simplify_coordinate_value(polys[index])
+            entries.append(entry)
+
+    layout_det_res = payload.get("layout_det_res")
+    if isinstance(layout_det_res, dict):
+        for box in layout_det_res.get("boxes", []) or []:
+            if not isinstance(box, dict):
+                continue
+
+            entry = {
+                "type": "layout",
+                "label": str(box.get("label", "")).strip() or "unknown",
+                "score": round(float(box.get("score", 0.0) or 0.0), 4),
+            }
+            if "coordinate" in box:
+                entry["coordinate"] = simplify_coordinate_value(box.get("coordinate"))
+            entries.append(entry)
+
+    return entries
+
+
 def extract_texts_deep(obj: Any, score_thresh: float, out: list[str]) -> None:
     if isinstance(obj, dict):
         if "rec_texts" in obj:
@@ -645,7 +704,21 @@ def dedupe_keep_order(items: list[str]) -> list[str]:
     return out
 
 
-def results_to_text(mode: str, results: list[dict]) -> str:
+def format_structure_coordinate_entry(entry: dict[str, Any]) -> str:
+    entry_type = str(entry.get("type", "")).strip()
+    score = entry.get("score")
+    score_label = f"{float(score):.4f}" if isinstance(score, (int, float)) else "n/a"
+    coordinate = json.dumps(entry.get("coordinate"), ensure_ascii=False)
+
+    if entry_type == "text":
+        text = str(entry.get("text", "")).strip()
+        return f"[TEXT][score={score_label}] {coordinate} {text}".rstrip()
+
+    label = str(entry.get("label", "")).strip() or "unknown"
+    return f"[LAYOUT][{label}][score={score_label}] {coordinate}"
+
+
+def results_to_text(mode: str, results: list[dict], *, structure_coordinate_mode: bool = False) -> str:
     parts: list[str] = []
     for item in results:
         page = item.get("page_index")
@@ -654,10 +727,18 @@ def results_to_text(mode: str, results: list[dict]) -> str:
 
         if mode == MODE_OCR:
             texts = item.get("rec_texts", []) or []
+            parts.extend(str(t).strip() for t in texts if str(t).strip())
         else:
-            texts = item.get("_extracted_texts", []) or []
-
-        parts.extend(str(t).strip() for t in texts if str(t).strip())
+            if structure_coordinate_mode:
+                coordinate_entries = item.get("_coordinate_entries", []) or []
+                parts.extend(
+                    format_structure_coordinate_entry(entry)
+                    for entry in coordinate_entries
+                    if isinstance(entry, dict)
+                )
+            else:
+                texts = item.get("_extracted_texts", []) or []
+                parts.extend(str(t).strip() for t in texts if str(t).strip())
         parts.append("")
     return "\n".join(parts).strip()
 
@@ -750,6 +831,22 @@ def ask_mode() -> str:
         if choice == "3":
             return "both"
         print("Invalid input. Please enter 1, 2, or 3.")
+
+
+def ask_structure_coordinate_mode(mode: str) -> bool:
+    if mode not in {MODE_STRUCTURE, "both"}:
+        return False
+
+    print("\nPP-StructureV3 coordinate mode:")
+    print("1. Off")
+    print("2. On (include text and layout coordinates in TXT output)")
+    while True:
+        choice = input("Enter 1 / 2 (Enter for default 1): ").strip()
+        if choice == "" or choice == "1":
+            return False
+        if choice == "2":
+            return True
+        print("Invalid input. Please enter 1 or 2.")
 
 
 def ask_scan_target() -> str:
@@ -1036,6 +1133,7 @@ def run_mode(
     targets: list[Path],
     recursive: bool,
     score_thresh: float,
+    structure_coordinate_mode: bool,
     output_mode: str,
     text_output_layout: str,
     device_preference: str,
@@ -1061,6 +1159,8 @@ def run_mode(
     print(f"Score threshold: {score_thresh}")
     print(f"Output mode: {output_mode}")
     print(f"TXT output layout: {describe_text_output_layout(text_output_layout)}")
+    if mode == MODE_STRUCTURE:
+        print(f"Coordinate mode: {'on' if structure_coordinate_mode else 'off'}")
     print(f"Device preference: {device_preference}")
     print(f"Keep PDF images: {keep_pdf_images}")
 
@@ -1106,6 +1206,10 @@ def run_mode(
                         payload["_extracted_texts"] = extract_structure_texts(
                             res, payload, score_thresh
                         )
+                        if structure_coordinate_mode:
+                            payload["_coordinate_entries"] = extract_structure_coordinate_entries(
+                                payload, score_thresh
+                            )
                     per_page_results.append(payload)
 
             elif src.suffix.lower() in pdf_exts:
@@ -1125,16 +1229,25 @@ def run_mode(
                             payload["_extracted_texts"] = extract_structure_texts(
                                 res, payload, score_thresh
                             )
+                            if structure_coordinate_mode:
+                                payload["_coordinate_entries"] = extract_structure_coordinate_entries(
+                                    payload, score_thresh
+                                )
 
                         payload["page_index"] = page_index
                         payload["rendered_page_image"] = saved_img_path
                         per_page_results.append(payload)
 
-            text_output = results_to_text(mode, per_page_results)
+            text_output = results_to_text(
+                mode,
+                per_page_results,
+                structure_coordinate_mode=structure_coordinate_mode,
+            )
             result_payload = {
                 "source_file": str(src),
                 "mode": mode,
                 "text_score_thresh": score_thresh,
+                "structure_coordinate_mode": structure_coordinate_mode,
                 "pdf_render_dpi": pdf_dpi,
                 "keep_pdf_images": keep_pdf_images,
                 "results": per_page_results,
@@ -1219,6 +1332,7 @@ def main() -> int:
     scan_target = ask_scan_target()
     image_exts, pdf_exts = select_scan_exts(scan_target, image_exts, pdf_exts)
     mode = ask_mode()
+    structure_coordinate_mode = ask_structure_coordinate_mode(mode)
     score_thresh = ask_score_threshold(default=0.70)
     text_output_layout = ask_text_output_layout()
     output_mode = ask_output_mode()
@@ -1260,6 +1374,7 @@ def main() -> int:
             targets=targets,
             recursive=args.recursive,
             score_thresh=score_thresh,
+            structure_coordinate_mode=False,
             output_mode=output_mode,
             text_output_layout=text_output_layout,
             device_preference=args.device,
@@ -1283,6 +1398,7 @@ def main() -> int:
             targets=targets,
             recursive=args.recursive,
             score_thresh=score_thresh,
+            structure_coordinate_mode=structure_coordinate_mode,
             output_mode=output_mode,
             text_output_layout=text_output_layout,
             device_preference=args.device,

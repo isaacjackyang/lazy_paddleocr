@@ -183,9 +183,24 @@ function Invoke-InteractiveNativeProcess {
         [string[]]$Arguments
     )
 
+    $quotedArguments = @()
+    foreach ($argument in $Arguments) {
+        if ($null -eq $argument) {
+            $quotedArguments += '""'
+            continue
+        }
+
+        if ($argument -match '[\s"]') {
+            $quotedArguments += '"' + ($argument -replace '"', '\"') + '"'
+        }
+        else {
+            $quotedArguments += $argument
+        }
+    }
+
     $process = Start-Process `
         -FilePath $FilePath `
-        -ArgumentList $Arguments `
+        -ArgumentList $quotedArguments `
         -Wait `
         -NoNewWindow `
         -PassThru
@@ -331,7 +346,9 @@ try {
     Write-Host "Default behavior scans subfolders recursively." -ForegroundColor Yellow
     Write-Host "Use -NoRecursive if you only want the current folder." -ForegroundColor Yellow
     Write-Host "You will be asked to choose file types, mode, confidence threshold, TXT output layout, and output format." -ForegroundColor Yellow
+    Write-Host "Interactive prompts will appear below." -ForegroundColor Yellow
     Write-Host ""
+    Write-Progress -Id 1 -Activity "Starting OCR launcher" -Completed
 
     $launcherResult = Invoke-InteractiveNativeProcess `
         -FilePath $ResolvedPythonExe `
