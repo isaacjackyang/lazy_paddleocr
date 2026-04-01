@@ -49,7 +49,7 @@ function Test-WorkspaceRoot {
     }
 
     $runnerScript = Join-Path $Path "tools\run_ocr_launcher.py"
-    $registerScript = Join-Path $Path "register_shared_ocr_home.ps1"
+    $registerScript = Join-Path $Path "tools\register_shared_ocr_home.ps1"
     return (Test-Path $runnerScript) -and (Test-Path $registerScript)
 }
 

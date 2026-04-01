@@ -270,11 +270,7 @@ function Get-ManualRecoveryItems {
     }
 
     if (-not $script:InstallStageStatus.verify) {
-        $verifyCommand = if ($script:InstallStageStatus.structure) {
-            'import fitz, paddle, paddleocr; from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
-        } else {
-            'import fitz, paddle, paddleocr; from paddleocr import PaddleOCR; PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); paddle.utils.run_check(); print("OCR_VERIFY_OK")'
-        }
+        $verifyCommand = 'import fitz, paddle, paddleocr; from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
         Add-ManualRecoveryItem -Items $items -Title "Verify the installed environment" -Command (Wrap-ManualCommand -InnerCommand ("& " + (Quote-PSLiteral $venvPython) + " -c " + (Quote-PSLiteral $verifyCommand)))
     }
 
@@ -1706,7 +1702,9 @@ try {
     Ensure-ShortProjectPath -ProjectRoot $ProjectRoot -VenvPathName $VenvDir
     Set-Location $ProjectRoot
 
-    $LogPath = Join-Path $ProjectRoot "install_paddle_ocr_suite.log"
+    $LogDir = Join-Path $ProjectRoot "log"
+    New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+    $LogPath = Join-Path $LogDir "install_paddle_ocr_suite.log"
     Start-Transcript -Path $LogPath -Force | Out-Null
 
     $phaseNames = @(
@@ -1829,21 +1827,13 @@ try {
     $script:InstallStageStatus.ocr = $true
     Finish-InstallPhase -Name "Install PaddleOCR and dependencies" -PhaseIndex $phaseCounter -PhaseTotal $phaseTotal
 
-    $StructureReady = $false
     Start-InstallPhase -Name "Install PP-StructureV3 dependencies" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
-    try {
-        Ensure-StructureDependenciesInstalled -PythonExe $VenvPython -DesiredMode $Mode -CudaVersion $Cuda
-        $StructureReady = $true
-        $script:InstallStageStatus.structure = $true
-    }
-    catch {
-        Write-Host "PP-StructureV3 optional dependency install failed. Continuing with OCR-only features." -ForegroundColor Yellow
-        Write-Host $_.Exception.Message -ForegroundColor Yellow
-    }
+    Ensure-StructureDependenciesInstalled -PythonExe $VenvPython -DesiredMode $Mode -CudaVersion $Cuda
+    $script:InstallStageStatus.structure = $true
     Finish-InstallPhase -Name "Install PP-StructureV3 dependencies" -PhaseIndex $phaseCounter -PhaseTotal $phaseTotal
 
     Start-InstallPhase -Name "Verify installation" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
-    Verify-Installation -PythonExe $VenvPython -CheckStructure:$StructureReady
+    Verify-Installation -PythonExe $VenvPython -CheckStructure:$true
     $script:InstallStageStatus.verify = $true
     Finish-InstallPhase -Name "Verify installation" -PhaseIndex $phaseCounter -PhaseTotal $phaseTotal
 
@@ -1851,10 +1841,6 @@ try {
     $SharedLauncherConfigPath = Register-SharedLauncherRoot -ProjectRoot $ProjectRoot
     Write-Host "Shared OCR home registered: $ProjectRoot" -ForegroundColor Green
     Write-Host "Shared OCR home file: $SharedLauncherConfigPath" -ForegroundColor Green
-    if (-not $StructureReady) {
-        Write-Host "PP-StructureV3 is not ready on this machine. Core OCR is ready; structure features remain optional." -ForegroundColor Yellow
-        Write-ManualRecoveryChecklist -Reason "PP-StructureV3 still needs manual installation on this machine." -StructureOnly
-    }
     Write-Host "Log file: $LogPath" -ForegroundColor Yellow
 
     try { Stop-Transcript | Out-Null } catch {}
@@ -1888,6 +1874,6 @@ catch {
     try { Stop-Transcript | Out-Null } catch {}
 
     Write-Host ""
-    Write-Host "Check log file: $ProjectRoot\install_paddle_ocr_suite.log" -ForegroundColor Yellow
+    Write-Host "Check log file: $LogPath" -ForegroundColor Yellow
     Pause-And-Exit 1
 }

@@ -66,14 +66,43 @@ function Get-TargetLabel {
     }
 }
 
+function Test-WorkspaceRoot {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) {
+        return $false
+    }
+
+    $runnerScript = Join-Path $Path "tools\run_ocr_launcher.py"
+    $registerScript = Join-Path $Path "tools\register_shared_ocr_home.ps1"
+    return (Test-Path $runnerScript) -and (Test-Path $registerScript)
+}
+
 function Get-ProjectRoot {
+    $candidates = @()
+
     if ($PSScriptRoot -and (Test-Path $PSScriptRoot)) {
-        return $PSScriptRoot
+        $candidates += $PSScriptRoot
     }
 
     $current = (Get-Location).Path
-    if ($current -and (Test-Path $current)) {
-        return $current
+    if ($current -and (Test-Path $current) -and ($candidates -notcontains $current)) {
+        $candidates += $current
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-WorkspaceRoot -Path $candidate) {
+            return $candidate
+        }
+
+        $parent = Split-Path -Parent $candidate
+        if ($parent -and ($parent -ne $candidate) -and (Test-WorkspaceRoot -Path $parent)) {
+            return $parent
+        }
+    }
+
+    if ($candidates.Count -gt 0) {
+        return $candidates[0]
     }
 
     throw "Unable to resolve project root."

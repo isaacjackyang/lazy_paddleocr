@@ -1,0 +1,27 @@
+# === 1. Python 暫存與虛擬環境 ===
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+
+# === 2. 專案特有的編譯與發佈產出 (依據您有 .spec 檔案) ===
+# PyInstaller 執行後產生的資料夾
+build/
+dist/
+# 若您不想分享編譯後的 exe，可取消下方註釋
+# *.exe
+
+# === 3. 作業系統與開發工具暫存 ===
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# === 4. 專案執行產出的紀錄或資料 ===
+*.log
+# 假設您的 OCR 輸出會存放在特定的 output 資料夾
+output/

@@ -111,7 +111,8 @@ try {
     Write-Host "Config : $configPath"
     Write-Host "Env    : PADDLE_OCR_HOME (User)"
     Write-Host ""
-    Write-Host "You can now copy 'ocr_here.bat' or 'ocr_here_no_recursive.bat' next to your documents." -ForegroundColor Yellow
+    Write-Host "You can now copy 'ocr_here.bat' next to your documents." -ForegroundColor Yellow
+    Write-Host "Use '-NoRecursive' when you only want the current folder." -ForegroundColor Yellow
     Pause-And-Exit 0
 }
 catch {

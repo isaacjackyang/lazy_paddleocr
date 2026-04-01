@@ -48,13 +48,13 @@
 
 1. 先在主安裝資料夾執行一次 `register_shared_ocr_home.cmd`
    或 `powershell.exe -ExecutionPolicy Bypass -File .\tools\register_shared_ocr_home.ps1`
-2. 把 `ocr_here.bat` 或 `ocr_here_no_recursive.bat` 複製到你要做 OCR 的資料夾旁
+2. 把 `ocr_here.bat` 複製到你要做 OCR 的資料夾旁
 3. 之後直接雙擊那個小 `.bat` 即可，它會自動回到主安裝資料夾裡的 `.venv` 啟動 OCR
 
 差異：
 
 - `ocr_here.bat`：以該 `.bat` 所在資料夾為掃描根目錄，預設遞迴掃描子資料夾
-- `ocr_here_no_recursive.bat`：只掃描該 `.bat` 所在的目前資料夾
+- `ocr_here.bat -NoRecursive`：只掃描該 `.bat` 所在的目前資料夾
 
 補充：
 
@@ -98,6 +98,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddleocr.ps1
 
 - 建立或重用 `.venv`
 - 安裝 PaddlePaddle、PaddleOCR、PyMuPDF 與 PP-StructureV3 相依套件
+- 會同時驗證 `PP-OCRv5` 與 `PP-StructureV3` 都能成功初始化，任一失敗都視為安裝失敗
 - 預設使用 GPU 模式，但若 GPU 安裝或驗證失敗會自動回退到 CPU
 - 安裝完成後可選擇直接啟動 OCR 啟動器
 
@@ -156,7 +157,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\start_ocr_launcher.ps1
 
 ### `tools\register_shared_ocr_home.ps1`
 
-> 這是共享 OCR 主目錄登記腳本，供 `ocr_here.bat` / `ocr_here_no_recursive.bat` 這類代理啟動器使用。
+> 這是共享 OCR 主目錄登記腳本，供 `ocr_here.bat` 這類代理啟動器使用。
 
 **功能**
 
@@ -196,8 +197,6 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\register_shared_ocr_home.ps
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\tools\merge_txt_by_serial.ps1
 ```
-
-也可以直接雙擊根目錄的 `merge_txt_by_serial.cmd`。
 
 **適合使用時機**
 
@@ -585,6 +584,7 @@ EXE 會承接目前 `.venv` 的 runtime 類型。
 ## 這個版本的其他修正
 
 - 安裝器現在會驗證 `PP-StructureV3` 是否真的能成功實例化；如果不行，會自動安裝 `paddlex[ocr]==3.4.2`。
+- 主安裝器現在要求 `PP-OCRv5` 與 `PP-StructureV3` 兩者都必須安裝並驗證成功，不再接受只完成 OCR 的半套環境。
 - 啟動器現在會在遞迴掃描時排除 `.venv`、`venv`、`__pycache__`、`.git`、`_pdf_pages` 與 `node_modules`。
 
 ===========================================================================================================================================

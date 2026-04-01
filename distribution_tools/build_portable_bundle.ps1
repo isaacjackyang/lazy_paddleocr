@@ -67,7 +67,7 @@ function Test-WorkspaceRoot {
     }
 
     $runnerScript = Join-Path $Path "tools\run_ocr_launcher.py"
-    $registerScript = Join-Path $Path "register_shared_ocr_home.ps1"
+    $registerScript = Join-Path $Path "tools\register_shared_ocr_home.ps1"
     return (Test-Path $runnerScript) -and (Test-Path $registerScript)
 }
 
@@ -506,9 +506,7 @@ try {
         "distribution_tools\build_full_portable_bundle.bat",
         "distribution_tools\build_portable_bundle.ps1",
         "install_and_start.bat",
-        "merge_txt_by_serial.cmd",
         "ocr_here.bat",
-        "ocr_here_no_recursive.bat",
         "register_shared_ocr_home.cmd",
         "tools\merge_txt_by_serial.ps1",
         "tools\register_shared_ocr_home.ps1",
@@ -581,7 +579,7 @@ try {
         excluded = @(
             ".venv",
             "__pycache__",
-            "install_paddle_ocr_suite.log",
+            "log",
             "generated OCR outputs",
             "temporary PDF render folders"
         )
