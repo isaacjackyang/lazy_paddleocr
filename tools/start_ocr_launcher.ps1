@@ -1,6 +1,6 @@
 param(
     [string]$PythonExe = ".\.venv\Scripts\python.exe",
-    [string]$LauncherScript = ".\run_ocr_launcher.py",
+    [string]$LauncherScript = ".\tools\run_ocr_launcher.py",
     [string]$Root = "",
     [switch]$NoRecursive,
     [ValidateSet("Auto", "CPU", "GPU")]
@@ -53,17 +53,81 @@ function Pause-And-Exit {
     exit $Code
 }
 
+function Test-WorkspaceRoot {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) {
+        return $false
+    }
+
+    $runnerScript = Join-Path $Path "tools\run_ocr_launcher.py"
+    $registerScript = Join-Path $Path "tools\register_shared_ocr_home.ps1"
+    return (Test-Path $runnerScript) -and (Test-Path $registerScript)
+}
+
 function Get-ProjectRoot {
+    $candidates = @()
+
     if ($PSScriptRoot -and (Test-Path $PSScriptRoot)) {
-        return $PSScriptRoot
+        $candidates += $PSScriptRoot
     }
 
     $current = (Get-Location).Path
-    if ($current -and (Test-Path $current)) {
-        return $current
+    if ($current -and (Test-Path $current) -and ($candidates -notcontains $current)) {
+        $candidates += $current
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-WorkspaceRoot -Path $candidate) {
+            return $candidate
+        }
+
+        $parent = Split-Path -Parent $candidate
+        if ($parent -and ($parent -ne $candidate) -and (Test-WorkspaceRoot -Path $parent)) {
+            return $parent
+        }
+    }
+
+    if ($candidates.Count -gt 0) {
+        return $candidates[0]
     }
 
     throw "Unable to resolve project root."
+}
+
+function Get-SharedLauncherConfigDir {
+    if ($env:LOCALAPPDATA) {
+        return (Join-Path $env:LOCALAPPDATA "PaddleOCRLauncher")
+    }
+
+    return (Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "PaddleOCRLauncher")
+}
+
+function Get-SharedLauncherConfigPath {
+    return (Join-Path (Get-SharedLauncherConfigDir) "shared_install_root.txt")
+}
+
+function Register-SharedLauncherEnvironment {
+    param([string]$InstallRoot)
+
+    $env:PADDLE_OCR_HOME = $InstallRoot
+    [Environment]::SetEnvironmentVariable("PADDLE_OCR_HOME", $InstallRoot, "User")
+
+    $registryPath = "HKCU:\Software\PaddleOCRLauncher"
+    New-Item -Path $registryPath -Force | Out-Null
+    Set-ItemProperty -Path $registryPath -Name "InstallRoot" -Value $InstallRoot
+}
+
+function Register-SharedLauncherRoot {
+    param([string]$ProjectRoot)
+
+    $resolvedRoot = (Resolve-Path $ProjectRoot).Path
+    $configDir = Get-SharedLauncherConfigDir
+    $configPath = Get-SharedLauncherConfigPath
+    New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+    Set-Content -Path $configPath -Value $resolvedRoot -Encoding ASCII
+    Register-SharedLauncherEnvironment -InstallRoot $resolvedRoot
+    return $configPath
 }
 
 function Invoke-NativeProcess {
@@ -159,6 +223,9 @@ try {
     }
 
     $RecursiveEnabled = -not $NoRecursive
+    $SharedLauncherConfigPath = Register-SharedLauncherRoot -ProjectRoot $ProjectRoot
+    Write-Host "Shared OCR Home   : $ProjectRoot"
+    Write-Host "Shared Home File  : $SharedLauncherConfigPath"
     Finish-LauncherPhase -Name "Check launcher files" -PhaseIndex $phaseCounter -PhaseTotal $phaseTotal
 
     Start-LauncherPhase -Name "Show settings" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
@@ -206,7 +273,7 @@ try {
     Start-LauncherPhase -Name "Start OCR Launcher" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
     Write-Host "Default behavior scans subfolders recursively." -ForegroundColor Yellow
     Write-Host "Use -NoRecursive if you only want the current folder." -ForegroundColor Yellow
-    Write-Host "You will be asked to choose file types, mode, confidence threshold, and output format." -ForegroundColor Yellow
+    Write-Host "You will be asked to choose file types, mode, confidence threshold, TXT output layout, and output format." -ForegroundColor Yellow
     Write-Host ""
 
     $launcherResult = Invoke-InteractiveNativeProcess `
