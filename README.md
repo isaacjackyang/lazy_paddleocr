@@ -130,6 +130,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddle_ocr_suite.ps
 - 檢查 `.venv\Scripts\python.exe` 與 `tools\run_ocr_launcher.py` 是否存在
 - 依指定掃描設定啟動 OCR 啟動器
 - 預設使用遞迴掃描
+- 啟動後會依序詢問掃描類型、模式、裝置、PDF DPI、OCR 參數、V3 專屬參數與輸出格式
 
 **常用執行方式**
 
@@ -141,8 +142,8 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\start_ocr_launcher.ps1
 
 - `-Root <folder>`：指定要掃描的資料夾，而不是使用專案資料夾
 - `-NoRecursive`：只掃描目前資料夾，不遞迴
-- `-Device Auto|CPU|GPU`：指定執行裝置；遇到不支援的 GPU 時可強制使用 CPU
-- `-PdfDpi 200`：調整 PDF 轉圖 DPI
+- `-Device Auto|CPU|GPU`：設定互動選單中的預設執行裝置；仍可在啟動後重新選擇
+- `-PdfDpi 200`：設定互動選單中的預設 PDF DPI
 - `-KeepPdfImages`：保留 PDF 轉出的頁面圖片
 - `-ImageExts` / `-PdfExts`：覆寫副檔名過濾條件
 
@@ -588,9 +589,55 @@ EXE 會承接目前 `.venv` 的 runtime 類型。
 ===========================================================================================================================================
 ## 新的互動式輸出選項
 
-啟動器現在會詢問你要：
+啟動器現在的互動順序如下：
 
-- 僅輸出 TXT
-- 輸出 TXT + JSON
+- 所有可調數值的題目，現在都會依「由小到大，最後一個是 `Custom`」的順序顯示，並在目前預設的那一項後面標示 `[預設值]`。
 
-若選擇僅輸出 TXT，則每個檔案的 JSON 與 knowledgebase JSONL 檔都會略過。
+1. `Choose file types to scan`
+   - 選擇掃描圖片、PDF，或兩者都掃。
+2. `Choose mode`
+   - `PP-OCRv5`、`PP-StructureV3`，或兩種都跑。
+3. `Choose device`
+   - 選擇 `Auto / CPU / GPU`。
+   - 中文說明會提示：這主要影響速度與穩定性，不直接改辨識品質。
+4. `Choose PDF DPI`
+   - 只在本次有掃描 PDF 時出現。
+   - 中文說明會提示：DPI 越高，小字通常越容易辨識，但速度更慢、記憶體使用更高。
+5. `Choose text_det_limit_side_len`
+   - 文字偵測前輸入影像的邊長上限。
+   - 中文說明會提示：設大一點較有利小字與高解析圖片，但速度較慢。
+6. `Choose text_det_thresh`
+   - 文字區域偵測門檻。
+   - 中文說明會提示：設低一點較容易抓到淡字或模糊字，但誤抓也可能增加。
+7. `Choose text_det_box_thresh`
+   - 文字框保留門檻。
+   - 中文說明會提示：設高一點只保留更有把握的框；設低一點會保留更多框。
+8. `Choose text_det_unclip_ratio`
+   - 文字框外擴比例。
+   - 中文說明會提示：設大一點較不容易切掉文字邊緣，但太大可能讓相鄰文字黏在一起。
+9. `Choose text_rec_score_thresh`
+   - 模型內部的文字辨識信心門檻。
+   - 中文說明會提示：設高一點更保守、低信心文字更容易被捨棄。
+10. `Choose final confidence threshold`
+    - 程式最後輸出前的再篩選門檻。
+    - 中文說明會提示：這和 `text_rec_score_thresh` 不同，這一題是最後輸出前才套用。
+11. `Choose layout_threshold`
+    - 只在 `PP-StructureV3` 或 `Run both` 時出現。
+    - 中文說明會提示：這是版面區塊偵測門檻；設低一點抓更多區塊，設高一點更保守。
+12. `PP-StructureV3 coordinate mode`
+    - 只在 `PP-StructureV3` 或 `Run both` 時出現。
+    - 可選是否輸出文字與版面框座標。
+    - 中文說明會提示：這不會提升辨識品質，只是讓輸出內容更完整，方便疊圖、標註與後處理。
+13. `Choose TXT output layout`
+    - `One TXT per image / PDF`
+    - `One <folder>knowledgebase.txt per folder`
+14. `Choose output format`
+    - `TXT only`
+    - `TXT + JSON`
+
+補充差異：
+
+- `text_rec_score_thresh`：模型內部的辨識信心門檻。
+- `final confidence threshold`：模型跑完之後，程式最後輸出前再篩一次的門檻。
+- `TXT only`：只輸出 TXT。
+- `TXT + JSON`：會額外保留每個檔案的 JSON；若使用 knowledgebase 模式，也會輸出對應的 JSONL。

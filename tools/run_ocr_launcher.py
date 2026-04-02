@@ -819,6 +819,7 @@ def build_folder_kb(
 
 def ask_mode() -> str:
     print("\nChoose mode:")
+    print("中文說明：PP-OCRv5 偏向純文字辨識；PP-StructureV3 會額外做版面分析。")
     print("1. PP-OCRv5")
     print("2. PP-StructureV3")
     print("3. Run both")
@@ -838,6 +839,8 @@ def ask_structure_coordinate_mode(mode: str) -> bool:
         return False
 
     print("\nPP-StructureV3 coordinate mode:")
+    print("中文說明：開啟後會額外輸出文字框與版面框座標，方便做疊圖、標註或後續分析。")
+    print("這不會提升辨識品質，只是讓輸出內容更完整。")
     print("1. Off")
     print("2. On (include text and layout coordinates in TXT output)")
     while True:
@@ -851,6 +854,7 @@ def ask_structure_coordinate_mode(mode: str) -> bool:
 
 def ask_scan_target() -> str:
     print("\nChoose file types to scan:")
+    print("中文說明：選擇這次要掃描圖片、PDF，或兩者都掃。")
     print("1. picture (JPG / PNG / BMP / WEBP)")
     print("2. PDF")
     print("3. picture + PDF")
@@ -877,43 +881,238 @@ def select_scan_exts(scan_target: str, image_exts: set[str], pdf_exts: set[str])
     return prompt_image_exts, set(pdf_exts)
 
 
-def ask_score_threshold(default: float = 0.70) -> float:
-    presets = ["0.50", "0.60", "0.70", "0.80", "0.90", "Custom"]
-    print("\nChoose confidence threshold:")
-    for i, p in enumerate(presets, start=1):
-        print(f"{i}. {p}")
+def format_optional_number(value: Any, *, integer: bool = False) -> str:
+    if value is None:
+        return "current default"
+    if integer:
+        return str(int(value))
+    return f"{float(value):.2f}"
+
+
+def numeric_values_equal(left: int | float | None, right: int | float | None, *, integer: bool) -> bool:
+    if left is None or right is None:
+        return left is right
+    if integer:
+        return int(left) == int(right)
+    return abs(float(left) - float(right)) < 1e-9
+
+
+def ask_numeric_setting(
+    heading: str,
+    explanation_lines: list[str],
+    presets: list[int | float],
+    *,
+    default_value: int | float | None,
+    min_value: int | float,
+    max_value: int | float,
+    integer: bool = False,
+    default_label: str | None = None,
+) -> int | float | None:
+    ordered_presets = list(dict.fromkeys(sorted(presets)))
+    custom_choice = len(ordered_presets) + 1
+    prompt_default = default_label or format_optional_number(default_value, integer=integer)
+    default_preset_index = None
+    for index, preset in enumerate(ordered_presets, start=1):
+        if numeric_values_equal(default_value, preset, integer=integer):
+            default_preset_index = index
+            break
+
+    print(f"\n{heading}:")
+    for line in explanation_lines:
+        print(line)
+    for index, preset in enumerate(ordered_presets, start=1):
+        label = format_optional_number(preset, integer=integer)
+        if default_preset_index == index:
+            label += " [預設值]"
+        print(f"{index}. {label}")
+    custom_label = "Custom"
+    if default_preset_index is None:
+        custom_label += " [預設值]"
+    print(f"{custom_choice}. {custom_label}")
 
     while True:
-        choice = input(f"Enter 1 to 6 (Enter for default {default:.2f}): ").strip()
+        choice = input(
+            f"Enter 1 to {custom_choice} (Enter for default {prompt_default}): "
+        ).strip()
         if choice == "":
-            return default
+            return default_value
 
-        mapping = {
-            "1": 0.50,
-            "2": 0.60,
-            "3": 0.70,
-            "4": 0.80,
-            "5": 0.90,
-        }
-        if choice in mapping:
-            return mapping[choice]
-
-        if choice == "6":
-            raw = input("Enter a value between 0.00 and 1.00: ").strip()
-            try:
-                value = float(raw)
-                if 0.0 <= value <= 1.0:
-                    return value
-            except ValueError:
-                pass
-            print("Invalid custom value. Try again.")
+        try:
+            index = int(choice)
+        except ValueError:
+            print(f"Invalid input. Please enter 1 to {custom_choice}.")
             continue
 
-        print("Invalid input. Please enter 1 to 6.")
+        if 1 <= index <= len(ordered_presets):
+            selected = ordered_presets[index - 1]
+            return int(selected) if integer else float(selected)
+
+        if index == custom_choice:
+            raw = input(
+                f"Enter a value between {format_optional_number(min_value, integer=integer)} "
+                f"and {format_optional_number(max_value, integer=integer)}: "
+            ).strip()
+            try:
+                value = int(raw) if integer else float(raw)
+            except ValueError:
+                print("Invalid custom value. Try again.")
+                continue
+            if min_value <= value <= max_value:
+                return value
+            print("Value out of range. Try again.")
+            continue
+
+        print(f"Invalid input. Please enter 1 to {custom_choice}.")
+
+
+def ask_device_choice(default: str) -> str:
+    print("\nChoose device:")
+    print("中文說明：選擇運算裝置，只影響速度與穩定性，不直接改變辨識品質。")
+    print("1. Auto  自動選擇，若 GPU 初始化失敗會回退到 CPU")
+    print("2. CPU   較穩定，但通常較慢")
+    print("3. GPU   通常較快，但需要顯卡環境能正常啟用")
+    mapping = {"1": DEVICE_AUTO, "2": DEVICE_CPU, "3": DEVICE_GPU}
+    reverse_mapping = {value: key for key, value in mapping.items()}
+
+    while True:
+        choice = input(
+            f"Enter 1 / 2 / 3 (Enter for default {default}): "
+        ).strip()
+        if choice == "":
+            return default
+        if choice in mapping:
+            return mapping[choice]
+        if choice in reverse_mapping:
+            return choice
+        print("Invalid input. Please enter 1, 2, or 3.")
+
+
+def ask_pdf_dpi(default: int) -> int:
+    return int(
+        ask_numeric_setting(
+            "Choose PDF DPI",
+            [
+                "中文說明：PDF 會先轉成圖片再做 OCR。",
+                "數值越高，小字通常越容易辨識，但速度會變慢、記憶體使用也會增加。",
+            ],
+            presets=[150, 200, 300, 400],
+            default_value=default,
+            min_value=72,
+            max_value=1200,
+            integer=True,
+        )
+    )
+
+
+def ask_text_det_limit_side_len() -> int | None:
+    return ask_numeric_setting(
+        "Choose text_det_limit_side_len",
+        [
+            "中文說明：控制文字偵測前輸入影像的邊長上限。",
+            "數值越大越有利小字與高解析圖片，但速度較慢、記憶體需求較高。",
+        ],
+        presets=[960, 1216, 1536, 1920, 4096],
+        default_value=960,
+        min_value=320,
+        max_value=4096,
+        integer=True,
+    )
+
+
+def ask_text_det_thresh() -> float | None:
+    return ask_numeric_setting(
+        "Choose text_det_thresh",
+        [
+            "中文說明：文字區域偵測門檻。",
+            "設低一點比較容易抓到淡字或模糊字，但誤抓也可能增加；設高一點會更保守。",
+        ],
+        presets=[0.20, 0.30, 0.40, 0.50],
+        default_value=0.30,
+        min_value=0.0,
+        max_value=1.0,
+    )
+
+
+def ask_text_det_box_thresh() -> float | None:
+    return ask_numeric_setting(
+        "Choose text_det_box_thresh",
+        [
+            "中文說明：控制候選文字框要不要留下。",
+            "設高一點只保留更有把握的框；設低一點會保留更多框，但可能多出錯框。",
+        ],
+        presets=[0.40, 0.50, 0.60, 0.70],
+        default_value=0.60,
+        min_value=0.0,
+        max_value=1.0,
+    )
+
+
+def ask_text_det_unclip_ratio() -> float | None:
+    return ask_numeric_setting(
+        "Choose text_det_unclip_ratio",
+        [
+            "中文說明：控制文字框向外擴張的比例。",
+            "設大一點比較不容易切掉文字邊緣；太大時，相鄰文字可能被黏在一起。",
+        ],
+        presets=[1.20, 1.50, 1.80, 2.00],
+        default_value=1.50,
+        min_value=0.5,
+        max_value=5.0,
+    )
+
+
+def ask_text_rec_score_thresh() -> float | None:
+    return ask_numeric_setting(
+        "Choose text_rec_score_thresh",
+        [
+            "中文說明：模型內部的文字辨識信心門檻。",
+            "設高一點會更保守、低信心文字較容易被捨棄；設低一點則會保留更多結果。",
+            "注意：這和最後輸出前的 confidence threshold 不同。",
+        ],
+        presets=[0.00, 0.30, 0.50, 0.70],
+        default_value=0.00,
+        min_value=0.0,
+        max_value=1.0,
+    )
+
+
+def ask_score_threshold(default: float = 0.70) -> float:
+    return float(
+        ask_numeric_setting(
+            "Choose final confidence threshold",
+            [
+                "中文說明：這是程式最後輸出前再做一次的篩選門檻。",
+                "設高一點會讓結果更乾淨，但可能漏掉低信心文字；設低一點會保留更多文字，也可能增加雜訊。",
+                "注意：這和 text_rec_score_thresh 不同，這一題是最後輸出前才套用。",
+            ],
+            presets=[0.50, 0.60, 0.70, 0.80, 0.90],
+            default_value=default,
+            min_value=0.0,
+            max_value=1.0,
+        )
+    )
+
+
+def ask_layout_threshold(mode: str) -> float | None:
+    if mode not in {MODE_STRUCTURE, "both"}:
+        return None
+
+    return ask_numeric_setting(
+        "Choose layout_threshold",
+        [
+            "中文說明：這是 PP-StructureV3 的版面區塊偵測門檻。",
+            "設低一點會抓到更多段落、表格、圖片區塊，但也更容易誤判；設高一點則更保守。",
+        ],
+        presets=[0.30, 0.50, 0.70],
+        default_value=0.50,
+        min_value=0.0,
+        max_value=1.0,
+    )
 
 
 def ask_text_output_layout() -> str:
     print("\nChoose TXT output layout:")
+    print("中文說明：決定 TXT 是每個檔案各出一份，還是整個資料夾合併成一份知識庫文字檔。")
     print("1. One TXT per image / PDF")
     print("2. One <folder>knowledgebase.txt per folder")
     while True:
@@ -929,6 +1128,7 @@ def ask_text_output_layout() -> str:
 
 def ask_output_mode() -> str:
     print("\nChoose output format:")
+    print("中文說明：TXT only 只有純文字；TXT + JSON 會另外保留結構化資料。")
     print("1. TXT only")
     print("2. TXT + JSON")
     while True:
@@ -1038,7 +1238,70 @@ def pipeline_accepts_kwarg(factory: Any, kwarg_name: str) -> bool:
     )
 
 
-def build_pipeline(mode: str, device: str | None, *, disable_mkldnn: bool = False):
+def make_pipeline_tuning_settings(
+    *,
+    text_det_limit_side_len: int | None,
+    text_det_thresh: float | None,
+    text_det_box_thresh: float | None,
+    text_det_unclip_ratio: float | None,
+    text_rec_score_thresh: float | None,
+    layout_threshold: float | None,
+) -> dict[str, Any]:
+    return {
+        "text_det_limit_side_len": text_det_limit_side_len,
+        "text_det_thresh": text_det_thresh,
+        "text_det_box_thresh": text_det_box_thresh,
+        "text_det_unclip_ratio": text_det_unclip_ratio,
+        "text_rec_score_thresh": text_rec_score_thresh,
+        "layout_threshold": layout_threshold,
+    }
+
+
+def apply_pipeline_setting_if_supported(
+    factory: Any,
+    pipeline_kwargs: dict[str, Any],
+    kwarg_name: str,
+    value: Any,
+) -> None:
+    if value is None:
+        return
+    if pipeline_accepts_kwarg(factory, kwarg_name):
+        pipeline_kwargs[kwarg_name] = value
+
+
+def describe_tuning_setting(
+    value: Any,
+    *,
+    integer: bool = False,
+    fallback: str = "current default",
+) -> str:
+    if value is None:
+        return fallback
+    if integer:
+        return str(int(value))
+    return f"{float(value):.2f}"
+
+
+def summarize_pipeline_tuning(mode: str, tuning_settings: dict[str, Any]) -> dict[str, Any]:
+    summary = {
+        "text_det_limit_side_len": tuning_settings.get("text_det_limit_side_len"),
+        "text_det_thresh": tuning_settings.get("text_det_thresh"),
+        "text_det_box_thresh": tuning_settings.get("text_det_box_thresh"),
+        "text_det_unclip_ratio": tuning_settings.get("text_det_unclip_ratio"),
+        "text_rec_score_thresh": tuning_settings.get("text_rec_score_thresh"),
+    }
+    if mode == MODE_STRUCTURE:
+        summary["layout_threshold"] = tuning_settings.get("layout_threshold")
+    return summary
+
+
+def build_pipeline(
+    mode: str,
+    device: str | None,
+    tuning_settings: dict[str, Any],
+    *,
+    disable_mkldnn: bool = False,
+):
     PaddleOCR, PPStructureV3 = load_paddle_entrypoints()
     pipeline_factory = PaddleOCR if mode == MODE_OCR else PPStructureV3
     pipeline_kwargs: dict[str, Any] = {}
@@ -1049,31 +1312,72 @@ def build_pipeline(mode: str, device: str | None, *, disable_mkldnn: bool = Fals
     ):
         pipeline_kwargs["enable_mkldnn"] = False
 
-    if mode == MODE_OCR:
-        return pipeline_factory(
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            use_textline_orientation=False,
-            text_rec_score_thresh=0.0,
-            **pipeline_kwargs,
-        )
+    apply_pipeline_setting_if_supported(
+        pipeline_factory,
+        pipeline_kwargs,
+        "text_det_limit_side_len",
+        tuning_settings.get("text_det_limit_side_len"),
+    )
+    apply_pipeline_setting_if_supported(
+        pipeline_factory,
+        pipeline_kwargs,
+        "text_det_thresh",
+        tuning_settings.get("text_det_thresh"),
+    )
+    apply_pipeline_setting_if_supported(
+        pipeline_factory,
+        pipeline_kwargs,
+        "text_det_box_thresh",
+        tuning_settings.get("text_det_box_thresh"),
+    )
+    apply_pipeline_setting_if_supported(
+        pipeline_factory,
+        pipeline_kwargs,
+        "text_det_unclip_ratio",
+        tuning_settings.get("text_det_unclip_ratio"),
+    )
+    apply_pipeline_setting_if_supported(
+        pipeline_factory,
+        pipeline_kwargs,
+        "text_rec_score_thresh",
+        tuning_settings.get("text_rec_score_thresh"),
+    )
 
+    if mode == MODE_OCR:
+        pipeline_kwargs.setdefault("use_doc_orientation_classify", False)
+        pipeline_kwargs.setdefault("use_doc_unwarping", False)
+        pipeline_kwargs.setdefault("use_textline_orientation", False)
+        pipeline_kwargs.setdefault("text_rec_score_thresh", 0.0)
+        return pipeline_factory(**pipeline_kwargs)
+
+    apply_pipeline_setting_if_supported(
+        pipeline_factory,
+        pipeline_kwargs,
+        "layout_threshold",
+        tuning_settings.get("layout_threshold"),
+    )
     return pipeline_factory(**pipeline_kwargs)
 
 
-def create_mode_pipeline(mode: str, device_preference: str):
+def create_mode_pipeline(mode: str, device_preference: str, tuning_settings: dict[str, Any]):
     initial_device = None if device_preference == DEVICE_AUTO else device_preference
 
     try:
         mkldnn_disabled = initial_device == DEVICE_CPU
         if initial_device == DEVICE_CPU:
             force_cpu_runtime(disable_mkldnn=True)
-        pipeline = build_pipeline(mode, initial_device, disable_mkldnn=mkldnn_disabled)
+        pipeline = build_pipeline(
+            mode,
+            initial_device,
+            tuning_settings,
+            disable_mkldnn=mkldnn_disabled,
+        )
         runtime_device = device_preference if initial_device else "auto (library default)"
         return {
             "pipeline": pipeline,
             "runtime_device": runtime_device,
             "mkldnn_disabled": mkldnn_disabled,
+            "tuning_settings": dict(tuning_settings),
         }
     except Exception as exc:
         if device_preference != DEVICE_AUTO or not is_gpu_init_error(exc):
@@ -1082,11 +1386,12 @@ def create_mode_pipeline(mode: str, device_preference: str):
         print(f"[WARN][{mode}] GPU initialization failed. Retrying on CPU.")
         print(f"  Detail: {exception_chain_text(exc)}")
         force_cpu_runtime(disable_mkldnn=True)
-        pipeline = build_pipeline(mode, DEVICE_CPU, disable_mkldnn=True)
+        pipeline = build_pipeline(mode, DEVICE_CPU, tuning_settings, disable_mkldnn=True)
         return {
             "pipeline": pipeline,
             "runtime_device": "cpu (fallback, mkldnn disabled)",
             "mkldnn_disabled": True,
+            "tuning_settings": dict(tuning_settings),
         }
 
 
@@ -1097,7 +1402,12 @@ def rebuild_runtime_with_cpu_retry(mode: str, runtime_state: dict[str, Any], exc
     )
     print(f"  Detail: {exception_chain_text(exc)}")
     force_cpu_runtime(disable_mkldnn=True)
-    runtime_state["pipeline"] = build_pipeline(mode, DEVICE_CPU, disable_mkldnn=True)
+    runtime_state["pipeline"] = build_pipeline(
+        mode,
+        DEVICE_CPU,
+        runtime_state.get("tuning_settings", {}),
+        disable_mkldnn=True,
+    )
     runtime_state["runtime_device"] = "cpu (onednn/pir retry, mkldnn disabled)"
     runtime_state["mkldnn_disabled"] = True
     print(f"  Runtime device: {runtime_state['runtime_device']}")
@@ -1133,6 +1443,7 @@ def run_mode(
     targets: list[Path],
     recursive: bool,
     score_thresh: float,
+    tuning_settings: dict[str, Any],
     structure_coordinate_mode: bool,
     output_mode: str,
     text_output_layout: str,
@@ -1156,16 +1467,34 @@ def run_mode(
     print(f"Targets: {len(targets)}")
     print(f"Image types: {', '.join(sorted(image_exts)) if image_exts else '(disabled)'}")
     print(f"PDF types: {', '.join(sorted(pdf_exts)) if pdf_exts else '(disabled)'}")
-    print(f"Score threshold: {score_thresh}")
+    print(f"Final confidence threshold: {score_thresh:.2f}")
+    print(
+        "text_det_limit_side_len: "
+        f"{describe_tuning_setting(tuning_settings.get('text_det_limit_side_len'), integer=True)}"
+    )
+    print(f"text_det_thresh: {describe_tuning_setting(tuning_settings.get('text_det_thresh'))}")
+    print(f"text_det_box_thresh: {describe_tuning_setting(tuning_settings.get('text_det_box_thresh'))}")
+    print(f"text_det_unclip_ratio: {describe_tuning_setting(tuning_settings.get('text_det_unclip_ratio'))}")
+    text_rec_fallback = "0.00 (current PP-OCRv5 default)" if mode == MODE_OCR else "current default"
+    print(
+        "text_rec_score_thresh: "
+        f"{describe_tuning_setting(tuning_settings.get('text_rec_score_thresh'), fallback=text_rec_fallback)}"
+    )
     print(f"Output mode: {output_mode}")
     print(f"TXT output layout: {describe_text_output_layout(text_output_layout)}")
     if mode == MODE_STRUCTURE:
+        print(
+            "layout_threshold: "
+            f"{describe_tuning_setting(tuning_settings.get('layout_threshold'))}"
+        )
         print(f"Coordinate mode: {'on' if structure_coordinate_mode else 'off'}")
     print(f"Device preference: {device_preference}")
+    if pdf_exts:
+        print(f"PDF DPI: {pdf_dpi}")
     print(f"Keep PDF images: {keep_pdf_images}")
 
     try:
-        runtime_state = create_mode_pipeline(mode, device_preference)
+        runtime_state = create_mode_pipeline(mode, device_preference, tuning_settings)
         pipeline = runtime_state["pipeline"]
         runtime_device = runtime_state["runtime_device"]
         print(f"Runtime device: {runtime_device}")
@@ -1250,6 +1579,7 @@ def run_mode(
                 "structure_coordinate_mode": structure_coordinate_mode,
                 "pdf_render_dpi": pdf_dpi,
                 "keep_pdf_images": keep_pdf_images,
+                "pipeline_tuning": summarize_pipeline_tuning(mode, tuning_settings),
                 "results": per_page_results,
             }
 
@@ -1332,8 +1662,26 @@ def main() -> int:
     scan_target = ask_scan_target()
     image_exts, pdf_exts = select_scan_exts(scan_target, image_exts, pdf_exts)
     mode = ask_mode()
-    structure_coordinate_mode = ask_structure_coordinate_mode(mode)
+    device_preference = ask_device_choice(args.device)
+    pdf_dpi = args.pdf_dpi
+    if pdf_exts:
+        pdf_dpi = ask_pdf_dpi(default=args.pdf_dpi)
+    text_det_limit_side_len = ask_text_det_limit_side_len()
+    text_det_thresh = ask_text_det_thresh()
+    text_det_box_thresh = ask_text_det_box_thresh()
+    text_det_unclip_ratio = ask_text_det_unclip_ratio()
+    text_rec_score_thresh = ask_text_rec_score_thresh()
     score_thresh = ask_score_threshold(default=0.70)
+    layout_threshold = ask_layout_threshold(mode)
+    tuning_settings = make_pipeline_tuning_settings(
+        text_det_limit_side_len=text_det_limit_side_len,
+        text_det_thresh=text_det_thresh,
+        text_det_box_thresh=text_det_box_thresh,
+        text_det_unclip_ratio=text_det_unclip_ratio,
+        text_rec_score_thresh=text_rec_score_thresh,
+        layout_threshold=layout_threshold,
+    )
+    structure_coordinate_mode = ask_structure_coordinate_mode(mode)
     text_output_layout = ask_text_output_layout()
     output_mode = ask_output_mode()
     selected_modes: list[str] = []
@@ -1374,11 +1722,12 @@ def main() -> int:
             targets=targets,
             recursive=args.recursive,
             score_thresh=score_thresh,
+            tuning_settings=tuning_settings,
             structure_coordinate_mode=False,
             output_mode=output_mode,
             text_output_layout=text_output_layout,
-            device_preference=args.device,
-            pdf_dpi=args.pdf_dpi,
+            device_preference=device_preference,
+            pdf_dpi=pdf_dpi,
             keep_pdf_images=args.keep_pdf_images,
             pdf_image_dirname=args.pdf_image_dirname,
             image_exts=image_exts,
@@ -1398,11 +1747,12 @@ def main() -> int:
             targets=targets,
             recursive=args.recursive,
             score_thresh=score_thresh,
+            tuning_settings=tuning_settings,
             structure_coordinate_mode=structure_coordinate_mode,
             output_mode=output_mode,
             text_output_layout=text_output_layout,
-            device_preference=args.device,
-            pdf_dpi=args.pdf_dpi,
+            device_preference=device_preference,
+            pdf_dpi=pdf_dpi,
             keep_pdf_images=args.keep_pdf_images,
             pdf_image_dirname=args.pdf_image_dirname,
             image_exts=image_exts,
