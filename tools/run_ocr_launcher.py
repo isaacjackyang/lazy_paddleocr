@@ -1012,7 +1012,7 @@ def ask_text_det_limit_side_len() -> int | None:
             "數值越大越有利小字與高解析圖片，但速度較慢、記憶體需求較高。",
         ],
         presets=[960, 1216, 1536, 1920, 4096],
-        default_value=960,
+        default_value=4096,
         min_value=320,
         max_value=4096,
         integer=True,
