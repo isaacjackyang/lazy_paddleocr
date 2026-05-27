@@ -4,18 +4,19 @@
 
 1. [這個版本的變更](#這個版本的變更)
 2. [一般使用方式](#一般使用方式)
-3. [補充文件](#補充文件)
-4. [小型代理啟動腳本](#小型代理啟動腳本)
-5. [PowerShell 腳本指南](#powershell-腳本指南)
-6. [攜帶式 ZIP 打包流程](#攜帶式-zip-打包流程)
-7. [One-folder EXE 打包流程](#one-folder-exe-打包流程)
-8. [One-file EXE 打包流程](#one-file-exe-打包流程)
-9. [Docker 版安裝與啟動流程](#docker-版安裝與啟動流程)
-10. [PP-StructureV3 座標疊圖檢視器](#pp-structurev3-座標疊圖檢視器)
-11. [輸出檔命名](#輸出檔命名)
-12. [安裝器維護向更新](#安裝器維護向更新)
-13. [這個版本的其他修正](#這個版本的其他修正)
-14. [新的互動式輸出選項](#新的互動式輸出選項)
+3. [目前實測可跑 CUDA 的版本組合](#目前實測可跑-cuda-的版本組合)
+4. [補充文件](#補充文件)
+5. [小型代理啟動腳本](#小型代理啟動腳本)
+6. [PowerShell 腳本指南](#powershell-腳本指南)
+7. [攜帶式 ZIP 打包流程](#攜帶式-zip-打包流程)
+8. [One-folder EXE 打包流程](#one-folder-exe-打包流程)
+9. [One-file EXE 打包流程](#one-file-exe-打包流程)
+10. [Docker 版安裝與啟動流程](#docker-版安裝與啟動流程)
+11. [PP-StructureV3 座標疊圖檢視器](#pp-structurev3-座標疊圖檢視器)
+12. [輸出檔命名](#輸出檔命名)
+13. [安裝器維護向更新](#安裝器維護向更新)
+14. [這個版本的其他修正](#這個版本的其他修正)
+15. [新的互動式輸出選項](#新的互動式輸出選項)
 ===========================================================================================================================================
 ## 這個版本的變更
 
@@ -121,6 +122,35 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddle_ocr_suite.ps
 - `cu130`
 
 如果你不確定，就先從預設值開始；只有在 GPU wheel 安裝或初始化失敗時，再換別的 `-Cuda` 標籤重試。
+### 目前實測可跑 CUDA 的版本組合
+
+目前這個 repo 在現有 `.venv` 內，已實際驗證可用的 GPU 組合如下：
+
+- `paddlepaddle-gpu 3.3.1`
+- `paddleocr 3.4.0`
+- `paddlex 3.4.2`
+- `PP-OCRv5`：GPU 初始化成功
+- `PP-StructureV3`：GPU 初始化成功
+- Paddle runtime device：`gpu:0`
+- CUDA runtime：`12.9`
+
+如果用一行表示，就是：
+
+```text
+paddleocr 3.4.0 + paddlex 3.4.2 + PP-OCRv5 + PP-StructureV3 + paddlepaddle-gpu 3.3.1 + CUDA 12.9
+```
+
+這裡不是只看套件版本號，而是有做實際 GPU 初始化驗證：
+
+- `PaddleOCR(device="gpu", ...)` = `OK`
+- `PPStructureV3(device="gpu")` = `OK`
+
+所以如果你要在新電腦重建一模一樣的 GPU-only 環境，最穩的目標就是先對齊這組版本，再檢查安裝摘要是否同樣顯示：
+
+- `GPU required    : YES`
+- `Paddle mode     : gpu`
+- `PP-OCRv5        : READY`
+- `PP-StructureV3  : READY`
 ===========================================================================================================================================
 ## 補充文件
 
