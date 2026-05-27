@@ -356,6 +356,45 @@ powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\start_ocr_laun
 
 ===========================================================================================================================================
 
+### `distribution_tools\build_wheelhouse.ps1`
+
+> 這是單獨輸出 wheelhouse 的腳本，預設輸出到根目錄 `wheel\`，不會另外建立 ZIP。
+
+**功能**
+
+- 從目前 `.venv` 匯出安裝所需的 wheel 檔
+- 會同時輸出 `python-version.txt`、`requirements-lock.txt`、`wheelhouse-mode.txt`
+- 如果目前 `.venv` 是 GPU 版，預設會建立 GPU-only wheelhouse
+- 可選擇額外加入 CPU fallback 的 Paddle wheel
+
+**常用執行方式**
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_wheelhouse.ps1
+```
+
+或直接雙擊：
+
+- `distribution_tools\build_wheelhouse.bat`
+
+**常用參數**
+
+- `-OutputDir .\wheel`：指定 wheelhouse 輸出資料夾
+- `-IncludeCpuFallback`：若目前 `.venv` 是 GPU 版，額外下載 CPU 版 `paddlepaddle` fallback wheel
+
+**適合使用時機**
+
+- 你只想先做好一份本機 wheel 資料夾
+- 你要把 wheel 單獨帶去別台電腦，不想先包成 ZIP
+- 你想先驗證目前 `.venv` 是否真的能匯出完整 wheel 集合
+
+補充：
+
+- 目前安裝器會優先讀根目錄 `wheel\`，找不到時才會回頭讀 `bundled_wheels\`
+- 如果目前 `.venv` 是 GPU 版，這支腳本預設產生的就是 GPU-only wheelhouse
+
+===========================================================================================================================================
+
 ### `distribution_tools\build_portable_bundle.ps1`
 
 > 這是建立攜帶式 ZIP 的打包腳本，輸出到 `dist\`。如果你要搬到另一台電腦，這是主要的完整攜帶包腳本。
@@ -514,6 +553,12 @@ powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_portable
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_portable_bundle.ps1 -IncludeWheelhouse -GpuOnlyWheelhouse
+```
+
+如果你根本不想先打 ZIP，只想單獨產出本機 `wheel\` 資料夾，請改用：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_wheelhouse.ps1
 ```
 
 ===========================================================================================================================================

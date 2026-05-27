@@ -529,6 +529,8 @@ try {
 
     Start-BundlePhase -Name "Copy portable project files" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
     $coreFiles = @(
+        "distribution_tools\build_wheelhouse.bat",
+        "distribution_tools\build_wheelhouse.ps1",
         "distribution_tools\build_portable_bundle.bat",
         "distribution_tools\build_full_portable_bundle.bat",
         "distribution_tools\build_portable_bundle.ps1",

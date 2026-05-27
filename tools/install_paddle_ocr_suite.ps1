@@ -121,9 +121,11 @@ function Get-ManualVenvPython {
 }
 
 function Get-ManualWheelhouseRoot {
-    $wheelhouseRoot = Join-Path (Get-ManualProjectRoot) "bundled_wheels"
-    if (Test-Path $wheelhouseRoot) {
-        return $wheelhouseRoot
+    foreach ($folderName in @("wheel", "bundled_wheels")) {
+        $wheelhouseRoot = Join-Path (Get-ManualProjectRoot) $folderName
+        if (Test-Path $wheelhouseRoot) {
+            return $wheelhouseRoot
+        }
     }
 
     return $null
@@ -721,14 +723,22 @@ function Import-BundledModelCache {
 function Initialize-BundledWheelhouse {
     param([string]$ProjectRoot)
 
-    $wheelhouseRoot = Join-Path $ProjectRoot "bundled_wheels"
-    if (-not (Test-Path $wheelhouseRoot)) {
+    $wheelhouseRoot = $null
+    foreach ($folderName in @("wheel", "bundled_wheels")) {
+        $candidate = Join-Path $ProjectRoot $folderName
+        if (Test-Path $candidate) {
+            $wheelhouseRoot = $candidate
+            break
+        }
+    }
+
+    if (-not $wheelhouseRoot) {
         return
     }
 
     $wheelFiles = @(Get-ChildItem -Path $wheelhouseRoot -Filter *.whl -File -ErrorAction SilentlyContinue)
     if ($wheelFiles.Count -eq 0) {
-        Write-Host "bundled_wheels was found, but no .whl files are present. Ignoring local wheelhouse." -ForegroundColor Yellow
+        Write-Host "$(Split-Path $wheelhouseRoot -Leaf) was found, but no .whl files are present. Ignoring local wheelhouse." -ForegroundColor Yellow
         return
     }
 
