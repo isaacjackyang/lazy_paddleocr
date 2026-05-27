@@ -1,7 +1,7 @@
 @echo off
 setlocal
 set SCRIPT_DIR=%~dp0
-powershell.exe -ExecutionPolicy Bypass -File "%SCRIPT_DIR%build_portable_bundle.ps1" -IncludeModelCache -IncludeWheelhouse
+powershell.exe -ExecutionPolicy Bypass -File "%SCRIPT_DIR%build_portable_bundle.ps1" -IncludeModelCache -IncludeWheelhouse -GpuOnlyWheelhouse
 set ERR=%ERRORLEVEL%
 if not "%ERR%"=="0" (
   echo.

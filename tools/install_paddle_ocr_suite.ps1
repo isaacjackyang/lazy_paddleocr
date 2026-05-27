@@ -9,6 +9,8 @@ param(
 
     [switch]$StrictVenvPythonMatch = $false,
 
+    [switch]$RequireGpu = $false,
+
     [int]$PipInstallTimeoutSeconds = 600
 )
 
@@ -25,6 +27,7 @@ $script:InstallerScriptPath = $PSCommandPath
 $script:ProjectRootForManual = $null
 $script:SystemPythonForManual = $null
 $script:PreferredPythonVersionForManual = $null
+$script:RequireGpu = [bool]$RequireGpu
 $script:InstallStageStatus = [ordered]@{
     python = $false
     venv = $false
@@ -33,6 +36,10 @@ $script:InstallStageStatus = [ordered]@{
     ocr = $false
     structure = $false
     verify = $false
+}
+
+if ($RequireGpu -and $Mode -ne "gpu") {
+    throw "-RequireGpu requires -Mode gpu."
 }
 
 function Write-Step($msg) {
@@ -247,7 +254,9 @@ function Get-ManualRecoveryItems {
     if (-not $script:InstallStageStatus.paddle) {
         if ($Mode -eq "gpu") {
             Add-ManualRecoveryItem -Items $items -Title "Install PaddlePaddle GPU" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle-gpu==3.2.2") -ForceReinstall:$false -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/$Cuda/")
-            Add-ManualRecoveryItem -Items $items -Title "If GPU still fails, install PaddlePaddle CPU fallback" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle==3.3.0") -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/cpu/")
+            if (-not $script:RequireGpu) {
+                Add-ManualRecoveryItem -Items $items -Title "If GPU still fails, install PaddlePaddle CPU fallback" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle==3.3.0") -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/cpu/")
+            }
         } else {
             Add-ManualRecoveryItem -Items $items -Title "Install PaddlePaddle CPU" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle==3.3.0") -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/cpu/")
         }
@@ -262,7 +271,11 @@ function Get-ManualRecoveryItems {
     }
 
     if (-not $script:InstallStageStatus.verify) {
-        $verifyCommand = 'import fitz, paddle, paddleocr; from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
+        if ($script:RequireGpu) {
+            $verifyCommand = 'import fitz, paddle, paddleocr; paddle.device.set_device("gpu"); from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(device="gpu", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(device="gpu"); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
+        } else {
+            $verifyCommand = 'import fitz, paddle, paddleocr; from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
+        }
         Add-ManualRecoveryItem -Items $items -Title "Verify the installed environment" -Command (Wrap-ManualCommand -InnerCommand ("& " + (Quote-PSLiteral $venvPython) + " -c " + (Quote-PSLiteral $verifyCommand)))
     }
 
@@ -1192,9 +1205,14 @@ import sys
 try:
     import paddle
     print("PADDLE_VERSION={0}".format(paddle.__version__))
-    ok = bool(paddle.is_compiled_with_cuda())
-    print("PADDLE_GPU_OK={0}".format("1" if ok else "0"))
-    raise SystemExit(0 if ok else 1)
+    if not paddle.is_compiled_with_cuda():
+        print("PADDLE_GPU_OK=0")
+        raise SystemExit(1)
+    paddle.device.set_device("gpu")
+    tensor = paddle.ones([1], dtype="float32") + 1
+    print("PADDLE_RUNTIME_DEVICE={0}".format(paddle.device.get_device()))
+    print("PADDLE_GPU_OK=1")
+    raise SystemExit(0)
 except Exception as e:
     print("PADDLE_CHECK_ERROR={0}".format(repr(e)))
     raise SystemExit(1)
@@ -1255,6 +1273,27 @@ function Test-OCRRuntimeReusable {
     param([string]$PythonExe)
 
     $tempPy = Join-Path $env:TEMP "check_ppocr_runtime_ready.py"
+    if ($script:RequireGpu) {
+@'
+import paddle
+try:
+    paddle.device.set_device("gpu")
+    from paddleocr import PaddleOCR
+    PaddleOCR(
+        device="gpu",
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+        text_rec_score_thresh=0.0,
+    )
+    print("PADDLE_RUNTIME_DEVICE={0}".format(paddle.device.get_device()))
+    print("PPOCRV5_READY=OK")
+    raise SystemExit(0)
+except Exception as e:
+    print("PPOCRV5_READY_FAILED={0}".format(repr(e)))
+    raise SystemExit(1)
+'@ | Set-Content -Path $tempPy -Encoding ASCII
+    } else {
 @'
 try:
     from paddleocr import PaddleOCR
@@ -1270,6 +1309,7 @@ except Exception as e:
     print("PPOCRV5_READY_FAILED={0}".format(repr(e)))
     raise SystemExit(1)
 '@ | Set-Content -Path $tempPy -Encoding ASCII
+    }
 
     try {
         $result = Invoke-NativeProcess -FilePath $PythonExe -ArgumentList @($tempPy)
@@ -1314,6 +1354,17 @@ function Test-StructureDependenciesReusable {
     param([string]$PythonExe)
 
     $tempPy = Join-Path $env:TEMP "check_structure_ready.py"
+    if ($script:RequireGpu) {
+@'
+import paddle
+from paddleocr import PPStructureV3
+print("PADDLE_VERSION={0}".format(paddle.__version__))
+paddle.device.set_device("gpu")
+PPStructureV3(device="gpu")
+print("PADDLE_RUNTIME_DEVICE={0}".format(paddle.device.get_device()))
+print("PPSTRUCTUREV3_OK")
+'@ | Set-Content -Path $tempPy -Encoding ASCII
+    } else {
 @'
 import paddle
 from paddleocr import PPStructureV3
@@ -1321,6 +1372,7 @@ print("PADDLE_VERSION={0}".format(paddle.__version__))
 PPStructureV3()
 print("PPSTRUCTUREV3_OK")
 '@ | Set-Content -Path $tempPy -Encoding ASCII
+    }
 
     try {
         $result = Invoke-NativeProcess -FilePath $PythonExe -ArgumentList @($tempPy)
@@ -1356,7 +1408,7 @@ function Ensure-StructureDependenciesInstalled {
 
     if (Test-StructureDependenciesReusable -PythonExe $PythonExe) {
         Write-Host "Reusable PP-StructureV3 dependencies detected. Skipping reinstall." -ForegroundColor Green
-        return
+        return $DesiredMode
     }
 
     Write-Host "Reusable PP-StructureV3 dependencies not found. Installing..." -ForegroundColor Yellow
@@ -1366,6 +1418,7 @@ function Ensure-StructureDependenciesInstalled {
         Write-Host "PP-StructureV3 validation still failed. Reinstalling PaddlePaddle and retrying..." -ForegroundColor Yellow
         $RepairedMode = Repair-PaddleInstalled -PythonExe $PythonExe -DesiredMode $DesiredMode -CudaVersion $CudaVersion
         Write-Host "PaddlePaddle repair mode: $RepairedMode" -ForegroundColor Green
+        $DesiredMode = $RepairedMode
 
         if (-not (Test-OCRDependenciesReusable -PythonExe $PythonExe)) {
             Write-Host "OCR dependencies no longer validate after PaddlePaddle repair. Revalidating OCR stack..." -ForegroundColor Yellow
@@ -1379,6 +1432,7 @@ function Ensure-StructureDependenciesInstalled {
     }
 
     Write-Host "PP-StructureV3 dependencies are ready." -ForegroundColor Green
+    return $DesiredMode
 }
 
 function Install-PaddleCPU {
@@ -1433,7 +1487,11 @@ function Install-PaddleGPU {
     )
 
     Write-Host "Installing paddlepaddle-gpu from official GPU index: $CudaVersion" -ForegroundColor Yellow
-    Write-Host "If the GPU wheel download stalls for over $PipInstallTimeoutSeconds seconds, the installer will fall back to CPU." -ForegroundColor Yellow
+    if ($script:RequireGpu) {
+        Write-Host "GPU-only mode is enabled. If GPU install or validation fails, the installer will stop instead of falling back to CPU." -ForegroundColor Yellow
+    } else {
+        Write-Host "If the GPU wheel download stalls for over $PipInstallTimeoutSeconds seconds, the installer will fall back to CPU." -ForegroundColor Yellow
+    }
     Invoke-PipInstall `
         -PythonExe $PythonExe `
         -Packages @("paddlepaddle-gpu==3.2.2") `
@@ -1466,6 +1524,9 @@ function Repair-PaddleInstalled {
             throw "GPU PaddlePaddle force reinstall completed but GPU validation still failed."
         }
         catch {
+            if ($script:RequireGpu) {
+                throw "Forced GPU PaddlePaddle repair failed and -RequireGpu was specified. CPU fallback is disabled."
+            }
             Write-Host "Forced GPU PaddlePaddle repair failed. Falling back to forced CPU reinstall..." -ForegroundColor Yellow
             Install-PaddleCPU -PythonExe $PythonExe -ForceReinstall
             if (Test-PaddleReusable -PythonExe $PythonExe -DesiredMode "cpu") {
@@ -1507,6 +1568,9 @@ function Ensure-PaddleInstalled {
             throw "GPU PaddlePaddle install completed but GPU check still failed."
         }
         catch {
+            if ($script:RequireGpu) {
+                throw "GPU install/check failed and -RequireGpu was specified. CPU fallback is disabled."
+            }
             Write-Host "GPU install/check failed. Falling back to CPU..." -ForegroundColor Yellow
             Install-PaddleCPU -PythonExe $PythonExe
             if (Test-PaddleReusable -PythonExe $PythonExe -DesiredMode "cpu") {
@@ -1572,6 +1636,62 @@ function Verify-Installation {
 
     $tempPy = Join-Path $env:TEMP "verify_paddle_install.py"
     if ($CheckStructure) {
+        if ($script:RequireGpu) {
+@'
+import platform
+import struct
+import sys
+import fitz
+import paddle
+import paddleocr
+from paddleocr import PaddleOCR, PPStructureV3
+
+print("Python:", sys.version.replace("\n", " "))
+print("Bits:", struct.calcsize("P") * 8)
+print("Machine:", platform.machine())
+print("Paddle:", paddle.__version__)
+print("Paddle compiled with CUDA:", paddle.is_compiled_with_cuda())
+print("PaddleOCR:", getattr(paddleocr, "__version__", "unknown"))
+print("PyMuPDF:", getattr(fitz, "VersionBind", "unknown"))
+
+if not paddle.is_compiled_with_cuda():
+    raise RuntimeError("The installed PaddlePaddle build is not CUDA-enabled.")
+
+try:
+    paddle.device.set_device("gpu")
+    print("Paddle runtime device:", paddle.device.get_device())
+except Exception as e:
+    print("PADDLE_GPU_DEVICE_FAILED=", repr(e))
+    raise
+
+try:
+    PaddleOCR(
+        device="gpu",
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+        text_rec_score_thresh=0.0,
+    )
+    print("PPOCRV5_READY=OK")
+except Exception as e:
+    print("PPOCRV5_READY_FAILED=", repr(e))
+    raise
+
+try:
+    PPStructureV3(device="gpu")
+    print("PPSTRUCTUREV3_READY=OK")
+except Exception as e:
+    print("PPSTRUCTUREV3_READY_FAILED=", repr(e))
+    raise
+
+try:
+    paddle.utils.run_check()
+    print("RUN_CHECK=OK")
+except Exception as e:
+    print("RUN_CHECK_FAILED=", repr(e))
+    raise
+'@ | Set-Content -Path $tempPy -Encoding ASCII
+        } else {
 @'
 import platform
 import struct
@@ -1615,7 +1735,57 @@ except Exception as e:
     print("RUN_CHECK_FAILED=", repr(e))
     raise
 '@ | Set-Content -Path $tempPy -Encoding ASCII
+        }
     } else {
+        if ($script:RequireGpu) {
+@'
+import platform
+import struct
+import sys
+import fitz
+import paddle
+import paddleocr
+from paddleocr import PaddleOCR
+
+print("Python:", sys.version.replace("\n", " "))
+print("Bits:", struct.calcsize("P") * 8)
+print("Machine:", platform.machine())
+print("Paddle:", paddle.__version__)
+print("Paddle compiled with CUDA:", paddle.is_compiled_with_cuda())
+print("PaddleOCR:", getattr(paddleocr, "__version__", "unknown"))
+print("PyMuPDF:", getattr(fitz, "VersionBind", "unknown"))
+
+if not paddle.is_compiled_with_cuda():
+    raise RuntimeError("The installed PaddlePaddle build is not CUDA-enabled.")
+
+try:
+    paddle.device.set_device("gpu")
+    print("Paddle runtime device:", paddle.device.get_device())
+except Exception as e:
+    print("PADDLE_GPU_DEVICE_FAILED=", repr(e))
+    raise
+
+try:
+    PaddleOCR(
+        device="gpu",
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+        text_rec_score_thresh=0.0,
+    )
+    print("PPOCRV5_READY=OK")
+except Exception as e:
+    print("PPOCRV5_READY_FAILED=", repr(e))
+    raise
+
+try:
+    paddle.utils.run_check()
+    print("RUN_CHECK=OK")
+except Exception as e:
+    print("RUN_CHECK_FAILED=", repr(e))
+    raise
+'@ | Set-Content -Path $tempPy -Encoding ASCII
+        } else {
 @'
 import platform
 import struct
@@ -1652,6 +1822,7 @@ except Exception as e:
     print("RUN_CHECK_FAILED=", repr(e))
     raise
 '@ | Set-Content -Path $tempPy -Encoding ASCII
+        }
     }
 
     try {
@@ -1746,6 +1917,9 @@ try {
 
     Write-InstallSubProgress -Activity "Prepare workspace" -Status "Configure Paddle environment" -PercentComplete 15
     Write-Host "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=$env:PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK" -ForegroundColor Green
+    if ($script:RequireGpu) {
+        Write-Host "GPU-only install mode: enabled (CPU fallback disabled)" -ForegroundColor Yellow
+    }
 
     Write-InstallSubProgress -Activity "Prepare workspace" -Status "Import bundled model cache" -PercentComplete 45
     Import-BundledModelCache -ProjectRoot $ProjectRoot
@@ -1846,7 +2020,7 @@ try {
     Finish-InstallPhase -Name "Install PaddleOCR and dependencies" -PhaseIndex $phaseCounter -PhaseTotal $phaseTotal
 
     Start-InstallPhase -Name "Install PP-StructureV3 dependencies" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
-    Ensure-StructureDependenciesInstalled -PythonExe $VenvPython -DesiredMode $Mode -CudaVersion $Cuda
+    $FinalMode = Ensure-StructureDependenciesInstalled -PythonExe $VenvPython -DesiredMode $FinalMode -CudaVersion $Cuda
     $script:InstallStageStatus.structure = $true
     Finish-InstallPhase -Name "Install PP-StructureV3 dependencies" -PhaseIndex $phaseCounter -PhaseTotal $phaseTotal
 
@@ -1873,6 +2047,7 @@ try {
     Write-Host "Installed components:" -ForegroundColor Cyan
     Write-Host "Python          : $(if ($InstalledSummary) { $InstalledSummary.python } else { '(not detected)' })" -ForegroundColor Green
     Write-Host "Virtual env     : $VenvPython" -ForegroundColor Green
+    Write-Host "GPU required    : $(if ($script:RequireGpu) { 'YES' } else { 'NO' })" -ForegroundColor Green
     Write-Host "Paddle mode     : $(if ($InstalledSummary) { $InstalledSummary.mode } else { $FinalMode })" -ForegroundColor Green
     Write-Host "PaddlePaddle    : $(if ($InstalledSummary -and $InstalledSummary.paddle) { $InstalledSummary.paddle } else { '(not detected)' })" -ForegroundColor Green
     Write-Host "PaddleOCR       : $(if ($InstalledSummary -and $InstalledSummary.paddleocr) { $InstalledSummary.paddleocr } else { '(not detected)' })" -ForegroundColor Green

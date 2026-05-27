@@ -11,29 +11,116 @@
 7. [One-folder EXE 打包流程](#one-folder-exe-打包流程)
 8. [One-file EXE 打包流程](#one-file-exe-打包流程)
 9. [Docker 版安裝與啟動流程](#docker-版安裝與啟動流程)
-10. [輸出檔命名](#輸出檔命名)
-11. [安裝器維護向更新](#安裝器維護向更新)
-12. [這個版本的其他修正](#這個版本的其他修正)
-13. [新的互動式輸出選項](#新的互動式輸出選項)
+10. [PP-StructureV3 座標疊圖檢視器](#pp-structurev3-座標疊圖檢視器)
+11. [輸出檔命名](#輸出檔命名)
+12. [安裝器維護向更新](#安裝器維護向更新)
+13. [這個版本的其他修正](#這個版本的其他修正)
+14. [新的互動式輸出選項](#新的互動式輸出選項)
 ===========================================================================================================================================
 ## 這個版本的變更
 
-- 預設安裝模式為 GPU。
+- 根目錄 `install_paddle_all.bat` 會以 GPU-only 模式安裝。
 - 若相容，會重用既有的 `.venv`。
 - 若相容，會重用既有的 PaddlePaddle。
 - 若相容，會重用既有的 PaddleOCR / PyMuPDF。
-- 如果 GPU 安裝或檢查失敗，安裝程式會自動回退到 CPU。
+- 直接執行 `tools\install_paddle_ocr_suite.ps1` 時，若未加 `-RequireGpu`，GPU 安裝或檢查失敗仍會自動回退到 CPU。
+- `distribution_tools\build_full_portable_bundle.bat` 現在會建立 GPU-only wheelhouse，不再包含 CPU fallback wheel。
 - 啟動器預設會遞迴掃描子資料夾。
 - 如果你只想掃描目前資料夾，請使用 `-NoRecursive`。
 
 ## 一般使用方式
 
 1. 雙擊 `install_paddle_all.bat`
-2. 或執行 `tools\install_paddle_ocr_suite.ps1`
+2. 或執行 `tools\install_paddle_ocr_suite.ps1 -Mode gpu -RequireGpu`
 3. 安裝完成後查看畫面最後的安裝摘要
 
 如果安裝在完成前中斷，安裝程式現在會顯示手動修復清單，並把相同的 PowerShell 指令寫入 `tools\install_manual_recovery.ps1`。
+如果你想保留「GPU 失敗時自動回退 CPU」的通用模式，請直接執行 `tools\install_paddle_ocr_suite.ps1`，不要加 `-RequireGpu`。
 如果你想一次建立 CPU 與 GPU 兩套獨立環境，可改用 `tools\install_paddleocr.ps1`。
+
+### 在新電腦安裝完整 GPU-only OCR 方案
+
+如果你的目標是：
+
+- Windows
+- `paddlepaddle 3.x`
+- `PP-OCRv5`
+- `PP-StructureV3`
+- 全部都必須用 GPU 執行
+
+請直接走 `install_paddle_all.bat` 這條線。它現在等同於：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddle_ocr_suite.ps1 -Mode gpu -RequireGpu
+```
+
+也就是說，只要 GPU 安裝、GPU 驗證、`PP-OCRv5` GPU 初始化、或 `PP-StructureV3` GPU 初始化有任何一步失敗，安裝程式就會直接停止，不會偷偷回退成 CPU 環境。
+
+**安裝前先確認**
+
+1. 新電腦是 Windows。
+2. 有 NVIDIA GPU，且顯示卡驅動已安裝完成。
+3. 最好先確認 `nvidia-smi` 可以正常執行。
+4. 專案請放在短且可寫入的路徑，例如 `D:\PaddleOCR`。
+5. 如果這台電腦沒有 Python，安裝器會嘗試自動安裝支援版本的 Python。
+
+**方法 A：直接從 repo / 解壓後資料夾安裝**
+
+1. 把整個專案資料夾放到新電腦，例如 `D:\PaddleOCR`。
+2. 如果裡面已經有舊的 `.venv`，先刪除。
+3. 雙擊 `install_paddle_all.bat`。
+4. 等安裝器完成。
+5. 最後檢查摘要至少要看到：
+   - `GPU required    : YES`
+   - `Paddle mode     : gpu`
+   - `PP-OCRv5        : READY`
+   - `PP-StructureV3  : READY`
+
+**方法 B：帶 GPU-only 攜帶包去新電腦安裝**
+
+1. 在來源電腦先建立完整 GPU-only 攜帶包：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_portable_bundle.ps1 -IncludeModelCache -IncludeWheelhouse -GpuOnlyWheelhouse
+```
+
+2. 把產出的 ZIP 複製到新電腦。
+3. 解壓到短路徑，例如 `D:\PaddleOCR`。
+4. 保持整個資料夾結構完整，不要只拿其中一部分檔案。
+5. 雙擊 `install_paddle_all.bat`。
+
+這條路線的好處是：
+
+- 模型快取可以一起帶過去
+- wheelhouse 也能一起帶過去
+- 新電腦比較不依賴即時網路下載
+
+但要注意：
+
+- `-GpuOnlyWheelhouse` 不會附 CPU fallback wheel
+- 所以目標電腦必須真的能跑 GPU
+- 如果 GPU 驗證失敗，安裝會直接失敗，不會改裝 CPU 版
+
+**如果新電腦 GPU 安裝失敗，優先檢查**
+
+1. `nvidia-smi` 是否正常。
+2. 顯示卡驅動是否太舊。
+3. 目前使用的 CUDA wheel 標籤是否合適。
+
+如果你需要手動指定 GPU wheel 來源，可改用：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddle_ocr_suite.ps1 -Mode gpu -RequireGpu -Cuda cu118
+```
+
+可選標籤目前是：
+
+- `cu118`
+- `cu126`
+- `cu129`
+- `cu130`
+
+如果你不確定，就先從預設值開始；只有在 GPU wheel 安裝或初始化失敗時，再換別的 `-Cuda` 標籤重試。
 ===========================================================================================================================================
 ## 補充文件
 
@@ -99,7 +186,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddleocr.ps1
 - 建立或重用 `.venv`
 - 安裝 PaddlePaddle、PaddleOCR、PyMuPDF 與 PP-StructureV3 相依套件
 - 會同時驗證 `PP-OCRv5` 與 `PP-StructureV3` 都能成功初始化，任一失敗都視為安裝失敗
-- 預設使用 GPU 模式，但若 GPU 安裝或驗證失敗會自動回退到 CPU
+- 預設使用 GPU 模式；加上 `-RequireGpu` 時會強制 GPU-only，若 GPU 安裝或驗證失敗就直接停止
 - 安裝完成後會顯示已安裝元件與版本摘要
 
 **常用執行方式**
@@ -108,11 +195,16 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddleocr.ps1
 powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddle_ocr_suite.ps1
 ```
 
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddle_ocr_suite.ps1 -Mode gpu -RequireGpu
+```
+
 **常用參數**
 
 - `-Mode gpu` 或 `-Mode cpu`：選擇偏好的安裝模式
 - `-Cuda cu118` / `cu126` / `cu129` / `cu130`：指定 Paddle GPU 套件來源版本
 - `-StrictVenvPythonMatch`：如果 `.venv` 的 Python major.minor 與偵測到的系統 Python 不一致，就重建 `.venv`
+- `-RequireGpu`：要求最終環境一定要通過 GPU 驗證，不允許自動回退到 CPU
 **適合使用時機**
 
 - 這台電腦尚未完成環境安裝
@@ -284,6 +376,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_portable
 
 - `-IncludeModelCache`：包含 `%USERPROFILE%\.paddlex\official_models`
 - `-IncludeWheelhouse`：包含本機 wheel 檔，降低目標電腦對網路下載的依賴
+- `-GpuOnlyWheelhouse`：建立只包含 `paddlepaddle-gpu` 的 wheelhouse，不附帶 CPU fallback wheel；需搭配 `-IncludeWheelhouse`
 - `-IncludeTests`：包含測試檔案
 - `-IncludeScreenshots`：包含 `Screenshots` 資料夾
 
@@ -378,7 +471,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_onefile_
 - 或執行：
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_portable_bundle.ps1 -IncludeModelCache -IncludeWheelhouse
+powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_portable_bundle.ps1 -IncludeModelCache -IncludeWheelhouse -GpuOnlyWheelhouse
 ```
 
 這個版本會額外包含：
@@ -391,6 +484,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_portable
 - 自動匯入隨包提供的模型快取
 - 優先使用本機 wheel，再考慮走網路下載
 - 優先選擇與建立 wheelhouse 時相同的 Python major.minor 版本
+- 只提供 GPU wheel，不提供 CPU fallback wheel
 
 ===========================================================================================================================================
 
@@ -416,6 +510,11 @@ powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_portable
 ```
 
 這需要本機已有可用的 `.venv`，因為 wheelhouse 是從目前環境匯出的。
+如果你要建立純 GPU 用的專用 wheelhouse，請改用：
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\distribution_tools\build_portable_bundle.ps1 -IncludeWheelhouse -GpuOnlyWheelhouse
+```
 
 ===========================================================================================================================================
 
@@ -557,7 +656,62 @@ EXE 會承接目前 `.venv` 的 runtime 類型。
 
 如果打包中包含 `bundled_wheels`，請保持它與 `tools\install_paddle_ocr_suite.ps1` 所在的整個資料夾結構一起移動，不要只單獨搬 `tools\` 裡的檔案。
 不要只搬移解壓後的一部分檔案，否則安裝程式會失去對本機 wheel 檔的存取。
+如果這包 ZIP 是用 `-GpuOnlyWheelhouse` 建立的，目標電腦也必須具備可用的 GPU 執行環境，因為安裝程式不會再回退到 CPU。
 如果你仍然必須解壓到很長的路徑下，安裝程式現在會嘗試在安裝時暫時重新對應到較短的磁碟代號。
+
+===========================================================================================================================================
+
+## PP-StructureV3 座標疊圖檢視器
+
+根目錄的 `ppstructurev3_overlay_viewer.html` 是一個本機單檔檢視器，用來把 `PP-StructureV3 coordinate mode` 輸出的座標 TXT 疊回原圖上檢查。
+
+**適合用途**
+
+- 快速檢查 `PP-StructureV3` 的文字框、版面框有沒有貼準。
+- 比對 OCR 結果和原圖是否有位移、縮放不一致或漏抓。
+- 在不開 Python、不中轉 JSON 的情況下，直接用瀏覽器看疊圖結果。
+
+**使用前提**
+
+- TXT 必須是開啟 `PP-StructureV3 coordinate mode` 後產生的 `*.ppstructurev3.txt`。
+- 最穩定的做法是把圖片和對應 TXT 放在同一批資料夾裡，再整個資料夾一起載入。
+- 直接雙擊 `ppstructurev3_overlay_viewer.html` 即可使用，不需要另外啟動本機伺服器。
+
+**基本使用方式**
+
+1. 開啟 `ppstructurev3_overlay_viewer.html`。
+2. 按「選擇資料夾」，或直接把整個資料夾拖進頁面。
+3. 左側會列出圖片清單；點選任一圖片後，頁面會自動嘗試配對同資料夾的 `*.ppstructurev3.txt`。
+4. 右側會把文字框、文字內容，或版面框疊在原圖上顯示。
+
+**支援的配對方式**
+
+- `image01.jpg` 對 `image01.ppstructurev3.txt`
+- `specs__page1.jpg` 對 `specs__page1.ppstructurev3.txt`
+- OCR 輸出採用「相對路徑以 `__` 串接」的命名時，檢視器也會自動嘗試配對
+
+**檢視操作**
+
+- 滑鼠滾輪：縮放圖片與疊圖
+- 按住左鍵拖曳：平移畫面
+- 雙擊檢視區：回到自動 fit 的初始視角
+- `顯示文字框 / 顯示文字內容 / 顯示版面框`：切換不同疊圖資訊
+- `字體倍率 / 框線透明度`：調整閱讀性
+
+**疊圖微調**
+
+- `整體縮放`：整體放大或縮小 OCR 疊圖層
+- `水平比例 / 垂直比例`：只修正寬或高的比例誤差
+- `X 位移 / Y 位移`：把整個疊圖層往左右或上下平移
+- `重設目前圖片校正`：只重設目前選取圖片的微調數值
+
+建議順序是先調 `整體縮放`，再補 `X/Y 位移`；只有在寬和高的比例本身不一致時，才去微調 `水平比例` 或 `垂直比例`。
+
+**注意事項**
+
+- 如果只拖圖片、沒有把對應 TXT 一起選進來，瀏覽器不能自動偷看同資料夾裡未選取的本機檔案。
+- 這個檢視器目前是以 `PP-StructureV3` 座標 TXT 為主，不是拿來看 `PP-OCRv5` 的一般 TXT。
+- 若某張圖片顯示「沒有對應的 ppstructurev3 TXT」，通常是命名沒有配上，或那張圖的 OCR 尚未用座標模式輸出。
 
 ===========================================================================================================================================
 
