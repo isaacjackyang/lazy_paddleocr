@@ -3,6 +3,7 @@ param(
     [string]$BundleName = "PaddleOCR",
     [switch]$IncludeModelCache = $false,
     [switch]$IncludeWheelhouse = $false,
+    [switch]$GpuOnlyWheelhouse = $false,
     [switch]$IncludeTests = $false,
     [switch]$IncludeScreenshots = $false,
     [switch]$KeepStaging = $false
@@ -12,6 +13,10 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "Continue"
 if ($PSVersionTable.PSVersion.Major -ge 7) {
     $PSNativeCommandUseErrorActionPreference = $false
+}
+
+if ($GpuOnlyWheelhouse -and -not $IncludeWheelhouse) {
+    throw "-GpuOnlyWheelhouse requires -IncludeWheelhouse."
 }
 
 function Write-Step($msg) {
@@ -295,7 +300,8 @@ function Copy-BundledModelCache {
 function Export-BundledWheelhouse {
     param(
         [string]$ProjectRoot,
-        [string]$StagingRoot
+        [string]$StagingRoot,
+        [switch]$GpuOnlyWheelhouse
     )
 
     $venvPython = Get-VenvPython -ProjectRoot $ProjectRoot
@@ -347,6 +353,11 @@ print("{0}.{1}".format(sys.version_info.major, sys.version_info.minor))
 
     $paddlePackages = @($packages | Where-Object { $_ -match '^paddlepaddle(-gpu)?==' })
     $generalPackages = @($packages | Where-Object { $_ -notmatch '^paddlepaddle(-gpu)?==' })
+    $gpuPackage = $packages | Where-Object { $_ -match '^paddlepaddle-gpu==' } | Select-Object -First 1
+
+    if ($GpuOnlyWheelhouse -and -not $gpuPackage) {
+        throw "GPU-only wheelhouse was requested, but the current .venv does not contain paddlepaddle-gpu."
+    }
 
     Write-SubProgress -Activity "Export bundled wheelhouse" -Status "Downloading general wheel files" -Current 2 -Total 3
     if ($generalPackages.Count -gt 0) {
@@ -383,8 +394,7 @@ print("{0}.{1}".format(sys.version_info.major, sys.version_info.minor))
         }
     }
 
-    $gpuPackage = $packages | Where-Object { $_ -match '^paddlepaddle-gpu==' } | Select-Object -First 1
-    if ($gpuPackage) {
+    if ($gpuPackage -and -not $GpuOnlyWheelhouse) {
         Write-SubProgress -Activity "Export bundled wheelhouse" -Status "Downloading CPU Paddle fallback wheel" -Current 3 -Total 3
         $fallbackDownload = Invoke-NativeProcess `
             -FilePath $venvPython `
@@ -394,6 +404,8 @@ print("{0}.{1}".format(sys.version_info.major, sys.version_info.minor))
             Write-Host "Warning: failed to download CPU Paddle fallback wheel. The portable bundle may still need internet if GPU fallback is required." -ForegroundColor Yellow
             $global:LASTEXITCODE = 0
         }
+    } elseif ($gpuPackage -and $GpuOnlyWheelhouse) {
+        Write-SubProgress -Activity "Export bundled wheelhouse" -Status "GPU-only wheelhouse export complete" -Current 3 -Total 3
     } else {
         Write-SubProgress -Activity "Export bundled wheelhouse" -Status "Wheelhouse export complete" -Current 3 -Total 3
     }
@@ -406,7 +418,8 @@ function New-PortableQuickStart {
         [string]$Path,
         [bool]$HasBundledModelCache,
         [bool]$HasBundledWheelhouse,
-        [string]$WheelhousePythonVersion
+        [string]$WheelhousePythonVersion,
+        [bool]$GpuOnlyWheelhouse = $false
     )
 
     $decodeUtf8Base64 = {
@@ -439,6 +452,17 @@ function New-PortableQuickStart {
         $content += $wheelhouseExtra -f $WheelhousePythonVersion
     } else {
         $content += & $decodeUtf8Base64 "CgrpgJnlgIvmiZPljIXmnKrljIXlkKvmnKzmqZ8gd2hlZWzjgIIK55uu5qiZ6Zu76IWm5LuN54S26ZyA6KaB5b6e57ay6Lev5LiL6LyJIFB5dGhvbiDlpZfku7bjgIIK"
+    }
+
+    if ($HasBundledWheelhouse -and $GpuOnlyWheelhouse) {
+        $content += @"
+
+GPU-only wheelhouse:
+- This bundle includes paddlepaddle-gpu wheels only.
+- CPU fallback wheels are intentionally not included.
+- On the target PC, use install_paddle_all.bat or:
+  powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddle_ocr_suite.ps1 -Mode gpu -RequireGpu
+"@
     }
 
     Set-Content -Path $Path -Value $content -Encoding UTF8
@@ -475,6 +499,9 @@ try {
     }
     if ($IncludeWheelhouse) {
         $variantTags += "wh"
+        if ($GpuOnlyWheelhouse) {
+            $variantTags += "gpu"
+        }
     }
     $variant = if ($variantTags.Count -eq 0) { "lite" } else { $variantTags -join "_" }
     $bundleFolderName = "{0}_{1}_{2}" -f $BundleName, $stamp, $variant
@@ -554,7 +581,7 @@ try {
 
     if ($IncludeWheelhouse) {
         Start-BundlePhase -Name "Export bundled wheelhouse" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
-        $HasBundledWheelhouse = Export-BundledWheelhouse -ProjectRoot $ProjectRoot -StagingRoot $StagingRoot
+        $HasBundledWheelhouse = Export-BundledWheelhouse -ProjectRoot $ProjectRoot -StagingRoot $StagingRoot -GpuOnlyWheelhouse:$GpuOnlyWheelhouse
         if ($HasBundledWheelhouse) {
             $WheelhousePythonVersion = (Get-Content -Path (Join-Path $StagingRoot "bundled_wheels\python-version.txt") -ErrorAction SilentlyContinue | Select-Object -First 1).Trim()
         }
@@ -566,7 +593,8 @@ try {
         -Path (Join-Path $StagingRoot "PORTABLE_QUICK_START.txt") `
         -HasBundledModelCache:$HasBundledModelCache `
         -HasBundledWheelhouse:$HasBundledWheelhouse `
-        -WheelhousePythonVersion $WheelhousePythonVersion
+        -WheelhousePythonVersion $WheelhousePythonVersion `
+        -GpuOnlyWheelhouse:$GpuOnlyWheelhouse
 
     $bundleInfo = [ordered]@{
         bundle_name = $bundleFolderName
@@ -574,6 +602,7 @@ try {
         include_model_cache = [bool]$HasBundledModelCache
         include_wheelhouse = [bool]$HasBundledWheelhouse
         wheelhouse_python_version = $WheelhousePythonVersion
+        wheelhouse_mode = if ($HasBundledWheelhouse) { if ($GpuOnlyWheelhouse) { "gpu-only" } else { "standard" } } else { "" }
         include_tests = [bool]$IncludeTests
         include_screenshots = [bool]$IncludeScreenshots
         excluded = @(
@@ -610,7 +639,8 @@ try {
         Write-Host "Bundled model cache: not included" -ForegroundColor Yellow
     }
     if ($HasBundledWheelhouse) {
-        Write-Host "Bundled wheelhouse: included (Python $WheelhousePythonVersion)" -ForegroundColor Yellow
+        $wheelhouseModeText = if ($GpuOnlyWheelhouse) { "GPU-only" } else { "standard" }
+        Write-Host "Bundled wheelhouse: included (Python $WheelhousePythonVersion, $wheelhouseModeText)" -ForegroundColor Yellow
     } else {
         Write-Host "Bundled wheelhouse: not included" -ForegroundColor Yellow
     }
