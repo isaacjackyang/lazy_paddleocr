@@ -124,26 +124,33 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\install_paddle_ocr_suite.ps
 如果你不確定，就先從預設值開始；只有在 GPU wheel 安裝或初始化失敗時，再換別的 `-Cuda` 標籤重試。
 ### 目前實測可跑 CUDA 的版本組合
 
-目前這個 repo 在現有 `.venv` 內，已實際驗證可用的 GPU 組合如下：
+目前這個 repo 在現有 `.venv` 內，已於 2026-06-09 實際驗證可用的 GPU 組合如下：
 
 - `paddlepaddle-gpu 3.3.1`
-- `paddleocr 3.4.0`
-- `paddlex 3.4.2`
+- `paddleocr 3.6.0`
+- `paddlex 3.6.1`
+- `nvidia-cudnn-cu12 9.9.0.52`
 - `PP-OCRv5`：GPU 初始化成功
 - `PP-StructureV3`：GPU 初始化成功
 - Paddle runtime device：`gpu:0`
-- CUDA runtime：`12.9`
+- CUDA runtime：`cu12`
 
 如果用一行表示，就是：
 
 ```text
-paddleocr 3.4.0 + paddlex 3.4.2 + PP-OCRv5 + PP-StructureV3 + paddlepaddle-gpu 3.3.1 + CUDA 12.9
+paddleocr 3.6.0 + paddlex 3.6.1 + PP-OCRv5 + PP-StructureV3 + paddlepaddle-gpu 3.3.1 + CUDA cu12 + cuDNN 9.9.0.52
 ```
 
 這裡不是只看套件版本號，而是有做實際 GPU 初始化驗證：
 
 - `PaddleOCR(device="gpu", ...)` = `OK`
 - `PPStructureV3(device="gpu")` = `OK`
+
+另外，這次清理過 `.venv` 內的舊版 NVIDIA wheel / DLL 殘留：
+
+- 已移除 `nvidia-*-cu11` 套件
+- 已移除 cuDNN 8 殘留 DLL
+- 目前只保留 cu12 / cuDNN 9 相關 runtime
 
 所以如果你要在新電腦重建一模一樣的 GPU-only 環境，最穩的目標就是先對齊這組版本，再檢查安裝摘要是否同樣顯示：
 
