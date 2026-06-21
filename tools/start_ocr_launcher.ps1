@@ -352,7 +352,8 @@ try {
     Start-LauncherPhase -Name "Start OCR Launcher" -PhaseCounter ([ref]$phaseCounter) -PhaseTotal $phaseTotal
     Write-Host "Default behavior scans subfolders recursively." -ForegroundColor Yellow
     Write-Host "Use -NoRecursive if you only want the current folder." -ForegroundColor Yellow
-    Write-Host "You will be asked to choose file types, mode, confidence threshold, TXT output layout, and output format." -ForegroundColor Yellow
+    Write-Host "General mode is the default: images use PP-OCRv6; PDFs use PP-StructureV3 Markdown." -ForegroundColor Yellow
+    Write-Host "Choose Expert mode in the launcher to edit thresholds, coordinates, output layout, and output format." -ForegroundColor Yellow
     Write-Host "Interactive prompts will appear below." -ForegroundColor Yellow
     Write-Host ""
     Write-Progress -Id 1 -Activity "Starting OCR launcher" -Completed

@@ -283,6 +283,66 @@ powershell.exe -ExecutionPolicy Bypass -File .\tools\start_ocr_launcher.ps1
 
 ===========================================================================================================================================
 
+### `start_ocr_gui.bat`
+
+> Tkinter GUI launcher for the local PaddleOCR environment.
+
+Use this when you want a windowed UI instead of the interactive CMD launcher.
+
+```powershell
+.\start_ocr_gui.bat
+```
+
+The GUI includes:
+
+- General / Expert mode switch.
+- General mode defaults to PP-OCRv6 for images and PP-StructureV3 for PDFs.
+- PDF output from PP-StructureV3 is saved as Markdown (`*.ppstructurev3.md`).
+- Model selectors for OCR engine, PP-OCRv6 detection model, and PP-OCRv6 recognition model.
+- Output mode selector for Text/Markdown only or Text/Markdown + JSON.
+- Input folder, recursive scan toggle, and optional custom output folder.
+- Progress display with Start, Pause, and Stop controls.
+
+Run the script after `install_paddle_all.bat` has completed successfully.
+
+===========================================================================
+
+### Agent / Hermes non-interactive CLI
+
+Use `tools\run_ocr_launcher.py --non-interactive` when an agent, scheduler, or script needs to run OCR without answering prompts.
+
+Default agent route:
+
+- Images: PP-OCRv6.
+- PDFs: PP-StructureV3 Markdown.
+- Output: text/Markdown + JSON unless changed with `--output-mode txt_only`.
+
+Example:
+
+```powershell
+.\.venv\Scripts\python.exe .\tools\run_ocr_launcher.py `
+  --non-interactive `
+  --root "D:\input_docs" `
+  --recursive `
+  --scan-target pictures_pdf `
+  --mode auto `
+  --output-mode txt_json `
+  --device auto
+```
+
+Useful switches:
+
+- `--mode auto|ppocrv6|ppstructurev3|both`
+- `--scan-target pictures|pdf|pictures_pdf`
+- `--output-mode txt_json|txt_only`
+- `--ocr-engine paddle_static|onnxruntime|paddle|transformers`
+- `--text-detection-model PP-OCRv6_medium_det`
+- `--text-recognition-model PP-OCRv6_medium_rec`
+- `--structure-coordinate-mode`
+- `--pdf-dpi 200`
+
+===========================================================================
+
 ### `tools\register_shared_ocr_home.ps1`
 
 > 這是共享 OCR 主目錄登記腳本，供 `ocr_here.bat` 這類代理啟動器使用。

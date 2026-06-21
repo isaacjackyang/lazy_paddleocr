@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+if os.environ.get("PADDLE_OCR_ALLOW_CUSTOM_OMP") != "1":
+    os.environ["OMP_NUM_THREADS"] = "1"
 
 import fitz  # PyMuPDF
 import numpy as np
@@ -27,6 +29,10 @@ PROMPT_PICTURE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 MODE_OCR = "ppocrv6"
 MODE_STRUCTURE = "ppstructurev3"
+MODE_BOTH = "both"
+MODE_AUTO = "auto"
+UI_MODE_GENERAL = "general"
+UI_MODE_EXPERT = "expert"
 DEFAULT_OCR_ENGINE = os.environ.get("PADDLE_OCR_ENGINE", "paddle_static")
 DEFAULT_TEXT_DETECTION_MODEL = os.environ.get("PADDLE_TEXT_DETECTION_MODEL", "PP-OCRv6_medium_det")
 DEFAULT_TEXT_RECOGNITION_MODEL = os.environ.get("PADDLE_TEXT_RECOGNITION_MODEL", "PP-OCRv6_medium_rec")
@@ -297,6 +303,68 @@ def parse_args() -> argparse.Namespace:
         default=default_gpu_id,
         help="GPU index to use, e.g. 0 or 1. Default: auto-select the GPU with the most free VRAM.",
     )
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Run without prompts. Intended for agents, schedulers, and scripts.",
+    )
+    parser.add_argument(
+        "--interface-mode",
+        choices=(UI_MODE_GENERAL, UI_MODE_EXPERT),
+        default=UI_MODE_GENERAL,
+        help="Non-interactive UI profile. General routes images to V6 and PDFs to V3 Markdown.",
+    )
+    parser.add_argument(
+        "--scan-target",
+        choices=(SCAN_PICTURES, SCAN_PDF, SCAN_PICTURES_PDF),
+        default=SCAN_PICTURES_PDF,
+        help="Non-interactive scan target.",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=(MODE_AUTO, MODE_OCR, MODE_STRUCTURE, MODE_BOTH),
+        default=MODE_AUTO,
+        help="Non-interactive processing mode. 'auto' routes images to V6 and PDFs to V3 Markdown.",
+    )
+    parser.add_argument(
+        "--output-mode",
+        choices=(OUTPUT_TXT_ONLY, OUTPUT_TXT_JSON),
+        default=OUTPUT_TXT_JSON,
+        help="Non-interactive output mode.",
+    )
+    parser.add_argument(
+        "--text-output-layout",
+        choices=(TEXT_LAYOUT_PER_FILE, TEXT_LAYOUT_KNOWLEDGEBASE),
+        default=TEXT_LAYOUT_PER_FILE,
+        help="Non-interactive text output layout.",
+    )
+    parser.add_argument("--score-thresh", type=float, default=0.70, help="Final text confidence threshold")
+    parser.add_argument("--text-det-limit-side-len", type=int, default=None, help="OCR detection limit side length")
+    parser.add_argument("--text-det-thresh", type=float, default=None, help="OCR text detection threshold")
+    parser.add_argument("--text-det-box-thresh", type=float, default=None, help="OCR text box threshold")
+    parser.add_argument("--text-det-unclip-ratio", type=float, default=None, help="OCR text box unclip ratio")
+    parser.add_argument("--text-rec-score-thresh", type=float, default=None, help="OCR recognition score threshold")
+    parser.add_argument("--layout-threshold", type=float, default=None, help="PP-StructureV3 layout threshold")
+    parser.add_argument(
+        "--structure-coordinate-mode",
+        action="store_true",
+        help="Include PP-StructureV3 coordinate-style text output.",
+    )
+    parser.add_argument(
+        "--ocr-engine",
+        default=DEFAULT_OCR_ENGINE,
+        help="PaddleOCR engine, e.g. paddle_static or onnxruntime.",
+    )
+    parser.add_argument(
+        "--text-detection-model",
+        default=DEFAULT_TEXT_DETECTION_MODEL,
+        help="PP-OCR text detection model name.",
+    )
+    parser.add_argument(
+        "--text-recognition-model",
+        default=DEFAULT_TEXT_RECOGNITION_MODEL,
+        help="PP-OCR text recognition model name.",
+    )
     return parser.parse_args()
 
 
@@ -439,12 +507,9 @@ class ProgressTracker:
         print("\n===== Scan Summary =====")
         print(f"Pending source files: {source_file_count}")
         print(f"Selected modes: {', '.join(selected_modes)}")
-        print(f"TXT output: {describe_text_output_layout(text_output_layout)}")
+        print(f"Text output: {describe_text_output_layout(text_output_layout)}")
         if len(selected_modes) > 1:
-            print(
-                "Execution steps: "
-                f"{self.total_steps} ({source_file_count} files x {len(selected_modes)} modes)"
-            )
+            print(f"Execution steps: {self.total_steps}")
         else:
             print(f"Execution steps: {self.total_steps}")
         print(f"Overall progress: {progress_percent(self.completed_steps, self.total_steps)}%")
@@ -782,7 +847,8 @@ def make_stem_with_relpath(src: Path, root: Path) -> str:
 
 def output_paths(src: Path, root: Path, mode: str) -> tuple[Path, Path]:
     stem = make_stem_with_relpath(src, root)
-    txt = src.parent / f"{stem}.{mode}.txt"
+    text_ext = ".md" if mode == MODE_STRUCTURE else ".txt"
+    txt = src.parent / f"{stem}.{mode}{text_ext}"
     js = src.parent / f"{stem}.{mode}.json"
     return txt, js
 
@@ -790,7 +856,7 @@ def output_paths(src: Path, root: Path, mode: str) -> tuple[Path, Path]:
 def describe_text_output_layout(text_output_layout: str) -> str:
     if text_output_layout == TEXT_LAYOUT_KNOWLEDGEBASE:
         return "one <folder>knowledgebase.txt per folder"
-    return "one TXT per source image/PDF"
+    return "one text/Markdown file per source image/PDF"
 
 
 def knowledgebase_output_paths(folder: Path) -> tuple[Path, Path]:
@@ -861,12 +927,25 @@ def ask_mode() -> str:
         if choice == "2":
             return MODE_STRUCTURE
         if choice == "3":
-            return "both"
+            return MODE_BOTH
         print("Invalid input. Please enter 1, 2, or 3.")
 
 
+def ask_interface_mode() -> str:
+    print("\nChoose interface mode:")
+    print("1. General (recommended): simple prompts; images use PP-OCRv6, PDFs use PP-StructureV3 Markdown")
+    print("2. Expert: show OCR/structure thresholds, coordinate mode, output layout, and mode selection")
+    while True:
+        choice = input("Enter 1 / 2 (Enter for default 1): ").strip()
+        if choice == "" or choice == "1":
+            return UI_MODE_GENERAL
+        if choice == "2":
+            return UI_MODE_EXPERT
+        print("Invalid input. Please enter 1 or 2.")
+
+
 def ask_structure_coordinate_mode(mode: str) -> bool:
-    if mode not in {MODE_STRUCTURE, "both"}:
+    if mode not in {MODE_STRUCTURE, MODE_BOTH}:
         return False
 
     print("\nPP-StructureV3 coordinate mode:")
@@ -1125,7 +1204,7 @@ def ask_score_threshold(default: float = 0.70) -> float:
 
 
 def ask_layout_threshold(mode: str) -> float | None:
-    if mode not in {MODE_STRUCTURE, "both"}:
+    if mode not in {MODE_STRUCTURE, MODE_BOTH}:
         return None
 
     return ask_numeric_setting(
@@ -1142,9 +1221,9 @@ def ask_layout_threshold(mode: str) -> float | None:
 
 
 def ask_text_output_layout() -> str:
-    print("\nChoose TXT output layout:")
+    print("\nChoose text output layout:")
     print("中文說明：決定 TXT 是每個檔案各出一份，還是整個資料夾合併成一份知識庫文字檔。")
-    print("1. One TXT per image / PDF")
+    print("1. One text/Markdown file per image / PDF")
     print("2. One <folder>knowledgebase.txt per folder")
     while True:
         choice = input("Enter 1 / 2 (Enter for default 1): ").strip()
@@ -1572,6 +1651,7 @@ def should_skip_generated_file(path: Path) -> bool:
         f".{MODE_OCR}.json",
         ".ppocrv5.txt",
         ".ppocrv5.json",
+        f".{MODE_STRUCTURE}.md",
         f".{MODE_STRUCTURE}.txt",
         f".{MODE_STRUCTURE}.json",
     )
@@ -1627,7 +1707,7 @@ def run_mode(
         f"{describe_tuning_setting(tuning_settings.get('text_rec_score_thresh'), fallback=text_rec_fallback)}"
     )
     print(f"Output mode: {output_mode}")
-    print(f"TXT output layout: {describe_text_output_layout(text_output_layout)}")
+    print(f"Text output layout: {describe_text_output_layout(text_output_layout)}")
     if mode == MODE_STRUCTURE:
         print(
             "layout_threshold: "
@@ -1689,30 +1769,35 @@ def run_mode(
                     per_page_results.append(payload)
 
             elif src.suffix.lower() in pdf_exts:
-                for page_index, png_bytes, saved_img_path in render_pdf_pages(
-                    src,
-                    dpi=pdf_dpi,
-                    keep_images=keep_pdf_images,
-                    pdf_image_dirname=pdf_image_dirname,
-                ):
-                    results = predict_with_runtime_retry(mode, runtime_state, png_bytes)
+                if mode == MODE_STRUCTURE:
+                    results = predict_with_runtime_retry(mode, runtime_state, str(src))
                     pipeline = runtime_state["pipeline"]
                     for res in results:
                         payload = normalize_json_attr(getattr(res, "json", None))
-                        if mode == MODE_OCR:
-                            payload = filter_ocr_payload(payload, score_thresh)
-                        else:
-                            payload["_extracted_texts"] = extract_structure_texts(
-                                res, payload, score_thresh
+                        payload["_extracted_texts"] = extract_structure_texts(
+                            res, payload, score_thresh
+                        )
+                        if structure_coordinate_mode:
+                            payload["_coordinate_entries"] = extract_structure_coordinate_entries(
+                                payload, score_thresh
                             )
-                            if structure_coordinate_mode:
-                                payload["_coordinate_entries"] = extract_structure_coordinate_entries(
-                                    payload, score_thresh
-                                )
-
-                        payload["page_index"] = page_index
-                        payload["rendered_page_image"] = saved_img_path
                         per_page_results.append(payload)
+                else:
+                    for page_index, png_bytes, saved_img_path in render_pdf_pages(
+                        src,
+                        dpi=pdf_dpi,
+                        keep_images=keep_pdf_images,
+                        pdf_image_dirname=pdf_image_dirname,
+                    ):
+                        results = predict_with_runtime_retry(mode, runtime_state, png_bytes)
+                        pipeline = runtime_state["pipeline"]
+                        for res in results:
+                            payload = normalize_json_attr(getattr(res, "json", None))
+                            payload = filter_ocr_payload(payload, score_thresh)
+
+                            payload["page_index"] = page_index
+                            payload["rendered_page_image"] = saved_img_path
+                            per_page_results.append(payload)
 
             text_output = results_to_text(
                 mode,
@@ -1737,7 +1822,7 @@ def run_mode(
                 else:
                     safe_unlink(out_json)
 
-                print(f"  TXT  -> {out_txt.name}")
+                print(f"  TEXT -> {out_txt.name}")
                 if emit_json:
                     print(f"  JSON -> {out_json.name}")
                 else:
@@ -1755,7 +1840,7 @@ def run_mode(
                     }
                 )
                 kb_txt_path, kb_jsonl_path = knowledgebase_output_paths(src.parent)
-                print(f"  TXT  -> queued for {kb_txt_path.name}")
+                print(f"  TEXT -> queued for {kb_txt_path.name}")
                 if emit_json:
                     print(f"  JSON -> queued for {kb_jsonl_path.name}")
                 else:
@@ -1797,7 +1882,16 @@ def run_mode(
 
 
 def main() -> int:
+    global DEFAULT_OCR_ENGINE, DEFAULT_TEXT_DETECTION_MODEL, DEFAULT_TEXT_RECOGNITION_MODEL
+
     args = parse_args()
+    DEFAULT_OCR_ENGINE = args.ocr_engine
+    DEFAULT_TEXT_DETECTION_MODEL = args.text_detection_model
+    DEFAULT_TEXT_RECOGNITION_MODEL = args.text_recognition_model
+    os.environ["PADDLE_OCR_ENGINE"] = DEFAULT_OCR_ENGINE
+    os.environ["PADDLE_TEXT_DETECTION_MODEL"] = DEFAULT_TEXT_DETECTION_MODEL
+    os.environ["PADDLE_TEXT_RECOGNITION_MODEL"] = DEFAULT_TEXT_RECOGNITION_MODEL
+
     app_root = get_app_root()
     configure_frozen_runtime_paths()
     import_bundled_model_cache()
@@ -1806,20 +1900,77 @@ def main() -> int:
     image_exts = normalize_exts(args.image_exts)
     pdf_exts = normalize_exts(args.pdf_exts)
 
-    scan_target = ask_scan_target()
+    if args.non_interactive:
+        interface_mode = args.interface_mode
+        scan_target = args.scan_target
+    else:
+        interface_mode = ask_interface_mode()
+        scan_target = ask_scan_target()
     image_exts, pdf_exts = select_scan_exts(scan_target, image_exts, pdf_exts)
-    mode = ask_mode()
-    device_preference = ask_device_choice(args.device)
+
+    auto_route = False
+    if args.non_interactive:
+        auto_route = args.mode == MODE_AUTO
+        mode = MODE_BOTH if auto_route else args.mode
+        device_preference = args.device
+        print("\nNon-interactive mode:")
+        print(f"Interface: {interface_mode}")
+        print(f"Scan target: {scan_target}")
+        print(f"Mode: {args.mode}")
+        print(f"Device: {device_preference}")
+        print(f"OCR engine: {DEFAULT_OCR_ENGINE}")
+        print(f"Detection model: {DEFAULT_TEXT_DETECTION_MODEL}")
+        print(f"Recognition model: {DEFAULT_TEXT_RECOGNITION_MODEL}")
+    elif interface_mode == UI_MODE_EXPERT:
+        mode = ask_mode()
+        device_preference = ask_device_choice(args.device)
+    else:
+        mode = MODE_BOTH
+        device_preference = args.device
+        auto_route = True
+        print("\nGeneral mode defaults:")
+        print("Images: PP-OCRv6 text OCR")
+        print("PDFs  : PP-StructureV3 Markdown")
+        print(f"Device: {device_preference}")
+
     pdf_dpi = args.pdf_dpi
-    if pdf_exts:
+    if (not args.non_interactive) and pdf_exts and interface_mode == UI_MODE_EXPERT:
         pdf_dpi = ask_pdf_dpi(default=args.pdf_dpi)
-    text_det_limit_side_len = ask_text_det_limit_side_len()
-    text_det_thresh = ask_text_det_thresh()
-    text_det_box_thresh = ask_text_det_box_thresh()
-    text_det_unclip_ratio = ask_text_det_unclip_ratio()
-    text_rec_score_thresh = ask_text_rec_score_thresh()
-    score_thresh = ask_score_threshold(default=0.70)
-    layout_threshold = ask_layout_threshold(mode)
+
+    if args.non_interactive:
+        text_det_limit_side_len = args.text_det_limit_side_len
+        text_det_thresh = args.text_det_thresh
+        text_det_box_thresh = args.text_det_box_thresh
+        text_det_unclip_ratio = args.text_det_unclip_ratio
+        text_rec_score_thresh = args.text_rec_score_thresh
+        score_thresh = args.score_thresh
+        layout_threshold = args.layout_threshold
+        structure_coordinate_mode = args.structure_coordinate_mode
+        text_output_layout = args.text_output_layout
+        output_mode = args.output_mode
+    elif interface_mode == UI_MODE_EXPERT:
+        text_det_limit_side_len = ask_text_det_limit_side_len()
+        text_det_thresh = ask_text_det_thresh()
+        text_det_box_thresh = ask_text_det_box_thresh()
+        text_det_unclip_ratio = ask_text_det_unclip_ratio()
+        text_rec_score_thresh = ask_text_rec_score_thresh()
+        score_thresh = ask_score_threshold(default=0.70)
+        layout_threshold = ask_layout_threshold(mode)
+        structure_coordinate_mode = ask_structure_coordinate_mode(mode)
+        text_output_layout = ask_text_output_layout()
+        output_mode = ask_output_mode()
+    else:
+        text_det_limit_side_len = None
+        text_det_thresh = None
+        text_det_box_thresh = None
+        text_det_unclip_ratio = None
+        text_rec_score_thresh = None
+        score_thresh = 0.70
+        layout_threshold = None
+        structure_coordinate_mode = False
+        text_output_layout = TEXT_LAYOUT_PER_FILE
+        output_mode = OUTPUT_TXT_JSON
+
     tuning_settings = make_pipeline_tuning_settings(
         text_det_limit_side_len=text_det_limit_side_len,
         text_det_thresh=text_det_thresh,
@@ -1828,13 +1979,10 @@ def main() -> int:
         text_rec_score_thresh=text_rec_score_thresh,
         layout_threshold=layout_threshold,
     )
-    structure_coordinate_mode = ask_structure_coordinate_mode(mode)
-    text_output_layout = ask_text_output_layout()
-    output_mode = ask_output_mode()
     selected_modes: list[str] = []
-    if mode in {MODE_OCR, "both"}:
+    if mode in {MODE_OCR, MODE_BOTH}:
         selected_modes.append(MODE_OCR)
-    if mode in {MODE_STRUCTURE, "both"}:
+    if mode in {MODE_STRUCTURE, MODE_BOTH}:
         selected_modes.append(MODE_STRUCTURE)
 
     targets = resolve_pending_targets(
@@ -1853,7 +2001,20 @@ def main() -> int:
 
     folder_kb_records: dict[Path, list[dict[str, Any]]] = {}
     folder_kb_touched_folders: set[Path] = set()
-    progress_tracker = ProgressTracker(total_steps=len(targets) * len(selected_modes))
+    image_targets = [path for path in targets if path.suffix.lower() in image_exts]
+    pdf_targets = [path for path in targets if path.suffix.lower() in pdf_exts]
+
+    if auto_route or interface_mode == UI_MODE_GENERAL:
+        selected_modes = []
+        if image_targets:
+            selected_modes.append(MODE_OCR)
+        if pdf_targets:
+            selected_modes.append(MODE_STRUCTURE)
+        total_steps = len(image_targets) + len(pdf_targets)
+    else:
+        total_steps = len(targets) * len(selected_modes)
+
+    progress_tracker = ProgressTracker(total_steps=total_steps)
     progress_tracker.print_plan(
         source_file_count=len(targets),
         selected_modes=selected_modes,
@@ -1862,11 +2023,14 @@ def main() -> int:
     succeeded_modes: list[str] = []
     failed_modes: list[str] = []
 
-    if mode in {MODE_OCR, "both"}:
+    route_by_file_type = auto_route or interface_mode == UI_MODE_GENERAL
+
+    if mode in {MODE_OCR, MODE_BOTH} and (not route_by_file_type or image_targets):
+        ocr_targets = image_targets if route_by_file_type else targets
         if run_mode(
             mode=MODE_OCR,
             root=root,
-            targets=targets,
+            targets=ocr_targets,
             recursive=args.recursive,
             score_thresh=score_thresh,
             tuning_settings=tuning_settings,
@@ -1879,7 +2043,7 @@ def main() -> int:
             keep_pdf_images=args.keep_pdf_images,
             pdf_image_dirname=args.pdf_image_dirname,
             image_exts=image_exts,
-            pdf_exts=pdf_exts,
+            pdf_exts=set() if route_by_file_type else pdf_exts,
             folder_kb_records=folder_kb_records,
             folder_kb_touched_folders=folder_kb_touched_folders,
             progress_tracker=progress_tracker,
@@ -1888,11 +2052,12 @@ def main() -> int:
         else:
             failed_modes.append(MODE_OCR)
 
-    if mode in {MODE_STRUCTURE, "both"}:
+    if mode in {MODE_STRUCTURE, MODE_BOTH} and (not route_by_file_type or pdf_targets):
+        structure_targets = pdf_targets if route_by_file_type else targets
         if run_mode(
             mode=MODE_STRUCTURE,
             root=root,
-            targets=targets,
+            targets=structure_targets,
             recursive=args.recursive,
             score_thresh=score_thresh,
             tuning_settings=tuning_settings,
@@ -1904,7 +2069,7 @@ def main() -> int:
             pdf_dpi=pdf_dpi,
             keep_pdf_images=args.keep_pdf_images,
             pdf_image_dirname=args.pdf_image_dirname,
-            image_exts=image_exts,
+            image_exts=set() if route_by_file_type else image_exts,
             pdf_exts=pdf_exts,
             folder_kb_records=folder_kb_records,
             folder_kb_touched_folders=folder_kb_touched_folders,
