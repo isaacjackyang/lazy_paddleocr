@@ -281,9 +281,9 @@ function Get-ManualRecoveryItems {
 
     if (-not $script:InstallStageStatus.verify) {
         if ($script:RequireGpu) {
-            $verifyCommand = 'import fitz, onnxruntime, paddle, paddleocr; paddle.device.set_device("gpu"); from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(device="gpu", engine="paddle_static", text_detection_model_name="PP-OCRv6_medium_det", text_recognition_model_name="PP-OCRv6_medium_rec", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(device="gpu", engine="paddle_static"); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
+            $verifyCommand = 'import fitz, onnxruntime, paddle, paddleocr; paddle.device.set_device("gpu"); from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(device="gpu", engine="paddle_static", text_detection_model_name="PP-OCRv6_medium_det", text_recognition_model_name="PP-OCRv6_medium_rec", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(device="gpu", engine="paddle_static"); print("INSTALL_VERIFY_OK")'
         } else {
-            $verifyCommand = 'import fitz, onnxruntime, paddle, paddleocr; from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(engine="paddle_static", text_detection_model_name="PP-OCRv6_medium_det", text_recognition_model_name="PP-OCRv6_medium_rec", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(engine="paddle_static"); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
+            $verifyCommand = 'import fitz, onnxruntime, paddle, paddleocr; from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(engine="paddle_static", text_detection_model_name="PP-OCRv6_medium_det", text_recognition_model_name="PP-OCRv6_medium_rec", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(engine="paddle_static"); print("INSTALL_VERIFY_OK")'
         }
         Add-ManualRecoveryItem -Items $items -Title "Verify the installed environment" -Command (Wrap-ManualCommand -InnerCommand ("& " + (Quote-PSLiteral $venvPython) + " -c " + (Quote-PSLiteral $verifyCommand)))
     }
@@ -1715,13 +1715,7 @@ try:
 except Exception as e:
     print("PPSTRUCTUREV3_READY_FAILED=", repr(e))
     raise
-
-try:
-    paddle.utils.run_check()
-    print("RUN_CHECK=OK")
-except Exception as e:
-    print("RUN_CHECK_FAILED=", repr(e))
-    raise
+print("PADDLE_PIPELINE_INIT=OK")
 '@ | Set-Content -Path $tempPy -Encoding ASCII
         } else {
 @'
@@ -1764,13 +1758,7 @@ try:
 except Exception as e:
     print("PPSTRUCTUREV3_READY_FAILED=", repr(e))
     raise
-
-try:
-    paddle.utils.run_check()
-    print("RUN_CHECK=OK")
-except Exception as e:
-    print("RUN_CHECK_FAILED=", repr(e))
-    raise
+print("PADDLE_PIPELINE_INIT=OK")
 '@ | Set-Content -Path $tempPy -Encoding ASCII
         }
     } else {
@@ -1819,13 +1807,7 @@ try:
 except Exception as e:
     print("PPOCRV6_READY_FAILED=", repr(e))
     raise
-
-try:
-    paddle.utils.run_check()
-    print("RUN_CHECK=OK")
-except Exception as e:
-    print("RUN_CHECK_FAILED=", repr(e))
-    raise
+print("PADDLE_PIPELINE_INIT=OK")
 '@ | Set-Content -Path $tempPy -Encoding ASCII
         } else {
 @'
@@ -1861,13 +1843,7 @@ try:
 except Exception as e:
     print("PPOCRV6_READY_FAILED=", repr(e))
     raise
-
-try:
-    paddle.utils.run_check()
-    print("RUN_CHECK=OK")
-except Exception as e:
-    print("RUN_CHECK_FAILED=", repr(e))
-    raise
+print("PADDLE_PIPELINE_INIT=OK")
 '@ | Set-Content -Path $tempPy -Encoding ASCII
         }
     }
@@ -1992,7 +1968,7 @@ function Write-InstallValidationReport {
     [void]$lines.Add("  Text recognition    : $($script:DefaultTextRecognitionModel)")
     [void]$lines.Add("  OCR engine          : $($script:DefaultOCREngine)")
     [void]$lines.Add("  PP-StructureV3      : READY")
-    [void]$lines.Add("  Paddle run_check    : OK")
+    [void]$lines.Add("  Paddle pipeline init: OK")
     [void]$lines.Add("")
     [void]$lines.Add("Model download/cache")
     [void]$lines.Add("  Cache root          : $cacheRoot")
@@ -2009,6 +1985,7 @@ function Write-InstallValidationReport {
     [void]$lines.Add("Notes")
     [void]$lines.Add("  The installer initialized PP-OCRv6 and PP-StructureV3 during verification.")
     [void]$lines.Add("  Successful verification means required runtime packages are installed and the selected pipelines can be created.")
+    [void]$lines.Add("  paddle.utils.run_check is intentionally skipped here because it can spawn child processes and fail on Windows without a main-module guard.")
     [void]$lines.Add("  PaddleX may download additional PP-StructureV3 sub-models later when a specific document feature is first used.")
     [void]$lines.Add("")
     [void]$lines.Add("Shared OCR home file : $SharedLauncherConfigPath")
