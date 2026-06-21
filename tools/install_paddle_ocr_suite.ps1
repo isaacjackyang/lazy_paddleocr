@@ -28,6 +28,13 @@ $script:ProjectRootForManual = $null
 $script:SystemPythonForManual = $null
 $script:PreferredPythonVersionForManual = $null
 $script:RequireGpu = [bool]$RequireGpu
+$script:PaddleOCRVersion = "3.7.0"
+$script:PaddleXVersion = "3.7.0"
+$script:PaddleCPUVersion = "3.3.0"
+$script:PaddleGPUVersion = "3.2.2"
+$script:DefaultOCREngine = "paddle_static"
+$script:DefaultTextDetectionModel = "PP-OCRv6_medium_det"
+$script:DefaultTextRecognitionModel = "PP-OCRv6_medium_rec"
 $script:InstallStageStatus = [ordered]@{
     python = $false
     venv = $false
@@ -236,8 +243,8 @@ function Get-ManualRecoveryItems {
     Add-ManualRecoveryItem -Items $items -Title "Open the project folder" -Command ("Set-Location " + (Quote-PSLiteral $projectRoot))
 
     if ($StructureOnly) {
-        Add-ManualRecoveryItem -Items $items -Title "Install PP-StructureV3 dependencies" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlex[ocr]==3.4.2"))
-        Add-ManualRecoveryItem -Items $items -Title "Verify PP-StructureV3" -Command (Wrap-ManualCommand -InnerCommand ("& " + (Quote-PSLiteral $venvPython) + " -c " + (Quote-PSLiteral 'import paddle; from paddleocr import PPStructureV3; PPStructureV3(); print("PPSTRUCTUREV3_READY=OK")')))
+        Add-ManualRecoveryItem -Items $items -Title "Install PP-StructureV3 dependencies" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlex[ocr]==$($script:PaddleXVersion)", "onnxruntime"))
+        Add-ManualRecoveryItem -Items $items -Title "Verify PP-StructureV3" -Command (Wrap-ManualCommand -InnerCommand ("& " + (Quote-PSLiteral $venvPython) + " -c " + (Quote-PSLiteral 'import paddle; from paddleocr import PPStructureV3; PPStructureV3(engine="paddle_static"); print("PPSTRUCTUREV3_READY=OK")')))
         return $items
     }
 
@@ -255,28 +262,28 @@ function Get-ManualRecoveryItems {
 
     if (-not $script:InstallStageStatus.paddle) {
         if ($Mode -eq "gpu") {
-            Add-ManualRecoveryItem -Items $items -Title "Install PaddlePaddle GPU" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle-gpu==3.2.2") -ForceReinstall:$false -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/$Cuda/")
+            Add-ManualRecoveryItem -Items $items -Title "Install PaddlePaddle GPU" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle-gpu==$($script:PaddleGPUVersion)") -ForceReinstall:$false -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/$Cuda/")
             if (-not $script:RequireGpu) {
-                Add-ManualRecoveryItem -Items $items -Title "If GPU still fails, install PaddlePaddle CPU fallback" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle==3.3.0") -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/cpu/")
+                Add-ManualRecoveryItem -Items $items -Title "If GPU still fails, install PaddlePaddle CPU fallback" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle==$($script:PaddleCPUVersion)") -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/cpu/")
             }
         } else {
-            Add-ManualRecoveryItem -Items $items -Title "Install PaddlePaddle CPU" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle==3.3.0") -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/cpu/")
+            Add-ManualRecoveryItem -Items $items -Title "Install PaddlePaddle CPU" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlepaddle==$($script:PaddleCPUVersion)") -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/cpu/")
         }
     }
 
     if (-not $script:InstallStageStatus.ocr) {
-        Add-ManualRecoveryItem -Items $items -Title "Install PaddleOCR / Pillow / PyMuPDF" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddleocr", "pillow", "pymupdf") -Upgrade)
+        Add-ManualRecoveryItem -Items $items -Title "Install PaddleOCR 3.7.0 / ONNX Runtime / Pillow / PyMuPDF" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddleocr==$($script:PaddleOCRVersion)", "onnxruntime", "pillow", "pymupdf") -Upgrade)
     }
 
     if (-not $script:InstallStageStatus.structure) {
-        Add-ManualRecoveryItem -Items $items -Title "Install PP-StructureV3 dependencies" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlex[ocr]==3.4.2"))
+        Add-ManualRecoveryItem -Items $items -Title "Install PP-StructureV3 dependencies" -Command (New-PipManualCommand -PythonExe $venvPython -Packages @("paddlex[ocr]==$($script:PaddleXVersion)", "onnxruntime"))
     }
 
     if (-not $script:InstallStageStatus.verify) {
         if ($script:RequireGpu) {
-            $verifyCommand = 'import fitz, paddle, paddleocr; paddle.device.set_device("gpu"); from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(device="gpu", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(device="gpu"); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
+            $verifyCommand = 'import fitz, onnxruntime, paddle, paddleocr; paddle.device.set_device("gpu"); from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(device="gpu", engine="paddle_static", text_detection_model_name="PP-OCRv6_medium_det", text_recognition_model_name="PP-OCRv6_medium_rec", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(device="gpu", engine="paddle_static"); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
         } else {
-            $verifyCommand = 'import fitz, paddle, paddleocr; from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
+            $verifyCommand = 'import fitz, onnxruntime, paddle, paddleocr; from paddleocr import PaddleOCR, PPStructureV3; PaddleOCR(engine="paddle_static", text_detection_model_name="PP-OCRv6_medium_det", text_recognition_model_name="PP-OCRv6_medium_rec", use_doc_orientation_classify=False, use_doc_unwarping=False, use_textline_orientation=False, text_rec_score_thresh=0.0); PPStructureV3(engine="paddle_static"); paddle.utils.run_check(); print("INSTALL_VERIFY_OK")'
         }
         Add-ManualRecoveryItem -Items $items -Title "Verify the installed environment" -Command (Wrap-ManualCommand -InnerCommand ("& " + (Quote-PSLiteral $venvPython) + " -c " + (Quote-PSLiteral $verifyCommand)))
     }
@@ -1259,8 +1266,10 @@ function Test-OCRDependenciesReusable {
 import sys
 try:
     import paddleocr
+    import onnxruntime
     import fitz
     print("PADDLEOCR_VERSION={0}".format(getattr(paddleocr, "__version__", "unknown")))
+    print("ONNXRUNTIME_VERSION={0}".format(getattr(onnxruntime, "__version__", "unknown")))
     print("PYMUPDF_VERSION={0}".format(getattr(fitz, "VersionBind", "unknown")))
     raise SystemExit(0)
 except Exception as e:
@@ -1291,16 +1300,19 @@ try:
     from paddleocr import PaddleOCR
     PaddleOCR(
         device="gpu",
+        engine="paddle_static",
+        text_detection_model_name="PP-OCRv6_medium_det",
+        text_recognition_model_name="PP-OCRv6_medium_rec",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
         text_rec_score_thresh=0.0,
     )
     print("PADDLE_RUNTIME_DEVICE={0}".format(paddle.device.get_device()))
-    print("PPOCRV5_READY=OK")
+    print("PPOCRV6_READY=OK")
     raise SystemExit(0)
 except Exception as e:
-    print("PPOCRV5_READY_FAILED={0}".format(repr(e)))
+    print("PPOCRV6_READY_FAILED={0}".format(repr(e)))
     raise SystemExit(1)
 '@ | Set-Content -Path $tempPy -Encoding ASCII
     } else {
@@ -1308,15 +1320,18 @@ except Exception as e:
 try:
     from paddleocr import PaddleOCR
     PaddleOCR(
+        engine="paddle_static",
+        text_detection_model_name="PP-OCRv6_medium_det",
+        text_recognition_model_name="PP-OCRv6_medium_rec",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
         text_rec_score_thresh=0.0,
     )
-    print("PPOCRV5_READY=OK")
+    print("PPOCRV6_READY=OK")
     raise SystemExit(0)
 except Exception as e:
-    print("PPOCRV5_READY_FAILED={0}".format(repr(e)))
+    print("PPOCRV6_READY_FAILED={0}".format(repr(e)))
     raise SystemExit(1)
 '@ | Set-Content -Path $tempPy -Encoding ASCII
     }
@@ -1370,7 +1385,7 @@ import paddle
 from paddleocr import PPStructureV3
 print("PADDLE_VERSION={0}".format(paddle.__version__))
 paddle.device.set_device("gpu")
-PPStructureV3(device="gpu")
+PPStructureV3(device="gpu", engine="paddle_static")
 print("PADDLE_RUNTIME_DEVICE={0}".format(paddle.device.get_device()))
 print("PPSTRUCTUREV3_OK")
 '@ | Set-Content -Path $tempPy -Encoding ASCII
@@ -1379,7 +1394,7 @@ print("PPSTRUCTUREV3_OK")
 import paddle
 from paddleocr import PPStructureV3
 print("PADDLE_VERSION={0}".format(paddle.__version__))
-PPStructureV3()
+PPStructureV3(engine="paddle_static")
 print("PPSTRUCTUREV3_OK")
 '@ | Set-Content -Path $tempPy -Encoding ASCII
     }
@@ -1401,12 +1416,12 @@ print("PPSTRUCTUREV3_OK")
 function Install-StructureDependencies {
     param([string]$PythonExe)
 
-    Invoke-PipInstall -PythonExe $PythonExe -Packages @("paddlex[ocr]==3.4.2") -TimeoutSeconds $PipInstallTimeoutSeconds
+    Invoke-PipInstall -PythonExe $PythonExe -Packages @("paddlex[ocr]==$($script:PaddleXVersion)", "onnxruntime") -TimeoutSeconds $PipInstallTimeoutSeconds
     if ($LASTEXITCODE -ne 0 -and (Test-PaddlexReusable -PythonExe $PythonExe)) {
         Write-Host "PaddleX is ready after post-install verification." -ForegroundColor Green
         $global:LASTEXITCODE = 0
     }
-    Throw-IfFailed "Failed to install PP-StructureV3 dependencies (paddlex[ocr]==3.4.2)."
+    Throw-IfFailed "Failed to install PP-StructureV3 dependencies (paddlex[ocr]==$($script:PaddleXVersion))."
 }
 
 function Ensure-StructureDependenciesInstalled {
@@ -1455,7 +1470,7 @@ function Install-PaddleCPU {
     try {
         Invoke-PipInstall `
             -PythonExe $PythonExe `
-            -Packages @("paddlepaddle==3.3.0") `
+            -Packages @("paddlepaddle==$($script:PaddleCPUVersion)") `
             -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/cpu/" `
             -ForceReinstall:$ForceReinstall `
             -TimeoutSeconds $PipInstallTimeoutSeconds
@@ -1504,7 +1519,7 @@ function Install-PaddleGPU {
     }
     Invoke-PipInstall `
         -PythonExe $PythonExe `
-        -Packages @("paddlepaddle-gpu==3.2.2") `
+        -Packages @("paddlepaddle-gpu==$($script:PaddleGPUVersion)") `
         -IndexUrl "https://www.paddlepaddle.org.cn/packages/stable/$CudaVersion/" `
         -ForceReinstall:$ForceReinstall `
         -TimeoutSeconds $PipInstallTimeoutSeconds
@@ -1603,12 +1618,12 @@ function Ensure-PaddleInstalled {
 function Install-OCRDependencies {
     param([string]$PythonExe)
 
-    Invoke-PipInstall -PythonExe $PythonExe -Packages @("paddleocr", "pillow", "pymupdf") -Upgrade -TimeoutSeconds $PipInstallTimeoutSeconds
+    Invoke-PipInstall -PythonExe $PythonExe -Packages @("paddleocr==$($script:PaddleOCRVersion)", "onnxruntime", "pillow", "pymupdf") -Upgrade -TimeoutSeconds $PipInstallTimeoutSeconds
     if ($LASTEXITCODE -ne 0 -and (Test-OCRDependenciesReusable -PythonExe $PythonExe)) {
         Write-Host "OCR dependencies are ready after post-install verification." -ForegroundColor Green
         $global:LASTEXITCODE = 0
     }
-    Throw-IfFailed "Failed to install paddleocr / pillow / pymupdf."
+    Throw-IfFailed "Failed to install paddleocr / onnxruntime / pillow / pymupdf."
 }
 
 function Ensure-OCRDependenciesInstalled {
@@ -1617,11 +1632,13 @@ function Ensure-OCRDependenciesInstalled {
     if (Test-OCRDependenciesReusable -PythonExe $PythonExe) {
         if (Test-OCRRuntimeReusable -PythonExe $PythonExe) {
             Write-Host "Reusable PaddleOCR / PyMuPDF installation detected. Skipping reinstall." -ForegroundColor Green
-            Write-Host "PP-OCRv5 runtime/models are ready." -ForegroundColor Green
+            Write-Host "PP-OCRv6 runtime/models are ready." -ForegroundColor Green
             return
         }
 
-        Write-Host "PaddleOCR imports are available, but PP-OCRv5 runtime/model validation failed." -ForegroundColor Yellow
+        Write-Host "PaddleOCR imports are available, but PP-OCRv6 runtime/model validation failed." -ForegroundColor Yellow
+        Write-Host "Upgrading/reinstalling the PaddleOCR 3.7.0 OCR stack..." -ForegroundColor Yellow
+        Install-OCRDependencies -PythonExe $PythonExe
     } else {
         Write-Host "Reusable OCR dependencies not found. Installing..." -ForegroundColor Yellow
         Install-OCRDependencies -PythonExe $PythonExe
@@ -1632,10 +1649,10 @@ function Ensure-OCRDependenciesInstalled {
     }
 
     if (-not (Test-OCRRuntimeReusable -PythonExe $PythonExe)) {
-        throw "PP-OCRv5 runtime/model validation failed. Check network access or clear the broken model cache and retry."
+        throw "PP-OCRv6 runtime/model validation failed. Check network access or clear the broken model cache and retry."
     }
 
-    Write-Host "OCR dependencies and PP-OCRv5 runtime are ready." -ForegroundColor Green
+    Write-Host "OCR dependencies and PP-OCRv6 runtime are ready." -ForegroundColor Green
 }
 
 function Verify-Installation {
@@ -1652,6 +1669,7 @@ import platform
 import struct
 import sys
 import fitz
+import onnxruntime
 import paddle
 import paddleocr
 from paddleocr import PaddleOCR, PPStructureV3
@@ -1662,6 +1680,7 @@ print("Machine:", platform.machine())
 print("Paddle:", paddle.__version__)
 print("Paddle compiled with CUDA:", paddle.is_compiled_with_cuda())
 print("PaddleOCR:", getattr(paddleocr, "__version__", "unknown"))
+print("ONNX Runtime:", getattr(onnxruntime, "__version__", "unknown"))
 print("PyMuPDF:", getattr(fitz, "VersionBind", "unknown"))
 
 if not paddle.is_compiled_with_cuda():
@@ -1677,18 +1696,21 @@ except Exception as e:
 try:
     PaddleOCR(
         device="gpu",
+        engine="paddle_static",
+        text_detection_model_name="PP-OCRv6_medium_det",
+        text_recognition_model_name="PP-OCRv6_medium_rec",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
         text_rec_score_thresh=0.0,
     )
-    print("PPOCRV5_READY=OK")
+    print("PPOCRV6_READY=OK")
 except Exception as e:
-    print("PPOCRV5_READY_FAILED=", repr(e))
+    print("PPOCRV6_READY_FAILED=", repr(e))
     raise
 
 try:
-    PPStructureV3(device="gpu")
+    PPStructureV3(device="gpu", engine="paddle_static")
     print("PPSTRUCTUREV3_READY=OK")
 except Exception as e:
     print("PPSTRUCTUREV3_READY_FAILED=", repr(e))
@@ -1707,6 +1729,7 @@ import platform
 import struct
 import sys
 import fitz
+import onnxruntime
 import paddle
 import paddleocr
 from paddleocr import PaddleOCR, PPStructureV3
@@ -1717,22 +1740,26 @@ print("Machine:", platform.machine())
 print("Paddle:", paddle.__version__)
 print("Paddle compiled with CUDA:", paddle.is_compiled_with_cuda())
 print("PaddleOCR:", getattr(paddleocr, "__version__", "unknown"))
+print("ONNX Runtime:", getattr(onnxruntime, "__version__", "unknown"))
 print("PyMuPDF:", getattr(fitz, "VersionBind", "unknown"))
 
 try:
     PaddleOCR(
+        engine="paddle_static",
+        text_detection_model_name="PP-OCRv6_medium_det",
+        text_recognition_model_name="PP-OCRv6_medium_rec",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
         text_rec_score_thresh=0.0,
     )
-    print("PPOCRV5_READY=OK")
+    print("PPOCRV6_READY=OK")
 except Exception as e:
-    print("PPOCRV5_READY_FAILED=", repr(e))
+    print("PPOCRV6_READY_FAILED=", repr(e))
     raise
 
 try:
-    PPStructureV3()
+    PPStructureV3(engine="paddle_static")
     print("PPSTRUCTUREV3_READY=OK")
 except Exception as e:
     print("PPSTRUCTUREV3_READY_FAILED=", repr(e))
@@ -1753,6 +1780,7 @@ import platform
 import struct
 import sys
 import fitz
+import onnxruntime
 import paddle
 import paddleocr
 from paddleocr import PaddleOCR
@@ -1763,6 +1791,7 @@ print("Machine:", platform.machine())
 print("Paddle:", paddle.__version__)
 print("Paddle compiled with CUDA:", paddle.is_compiled_with_cuda())
 print("PaddleOCR:", getattr(paddleocr, "__version__", "unknown"))
+print("ONNX Runtime:", getattr(onnxruntime, "__version__", "unknown"))
 print("PyMuPDF:", getattr(fitz, "VersionBind", "unknown"))
 
 if not paddle.is_compiled_with_cuda():
@@ -1778,14 +1807,17 @@ except Exception as e:
 try:
     PaddleOCR(
         device="gpu",
+        engine="paddle_static",
+        text_detection_model_name="PP-OCRv6_medium_det",
+        text_recognition_model_name="PP-OCRv6_medium_rec",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
         text_rec_score_thresh=0.0,
     )
-    print("PPOCRV5_READY=OK")
+    print("PPOCRV6_READY=OK")
 except Exception as e:
-    print("PPOCRV5_READY_FAILED=", repr(e))
+    print("PPOCRV6_READY_FAILED=", repr(e))
     raise
 
 try:
@@ -1801,6 +1833,7 @@ import platform
 import struct
 import sys
 import fitz
+import onnxruntime
 import paddle
 import paddleocr
 from paddleocr import PaddleOCR
@@ -1811,18 +1844,22 @@ print("Machine:", platform.machine())
 print("Paddle:", paddle.__version__)
 print("Paddle compiled with CUDA:", paddle.is_compiled_with_cuda())
 print("PaddleOCR:", getattr(paddleocr, "__version__", "unknown"))
+print("ONNX Runtime:", getattr(onnxruntime, "__version__", "unknown"))
 print("PyMuPDF:", getattr(fitz, "VersionBind", "unknown"))
 
 try:
     PaddleOCR(
+        engine="paddle_static",
+        text_detection_model_name="PP-OCRv6_medium_det",
+        text_recognition_model_name="PP-OCRv6_medium_rec",
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=False,
         text_rec_score_thresh=0.0,
     )
-    print("PPOCRV5_READY=OK")
+    print("PPOCRV6_READY=OK")
 except Exception as e:
-    print("PPOCRV5_READY_FAILED=", repr(e))
+    print("PPOCRV6_READY_FAILED=", repr(e))
     raise
 
 try:
@@ -1862,7 +1899,7 @@ import json
 import sys
 
 packages = {}
-for name in ("paddlepaddle", "paddlepaddle-gpu", "paddleocr", "paddlex", "PyMuPDF"):
+for name in ("paddlepaddle", "paddlepaddle-gpu", "paddleocr", "paddlex", "onnxruntime", "PyMuPDF"):
     try:
         packages[name] = md.version(name)
     except Exception:
@@ -1873,6 +1910,7 @@ summary = {
     "paddle": packages.get("paddlepaddle-gpu") or packages.get("paddlepaddle") or "",
     "paddleocr": packages.get("paddleocr") or "",
     "paddlex": packages.get("paddlex") or "",
+    "onnxruntime": packages.get("onnxruntime") or "",
     "pymupdf": packages.get("PyMuPDF") or "",
     "mode": "$FinalMode"
 }
@@ -1896,6 +1934,87 @@ print(json.dumps(summary, ensure_ascii=True))
             Remove-Item $tempPy -Force -ErrorAction SilentlyContinue
         }
     }
+}
+
+function Get-ModelCacheEntries {
+    $cacheRoot = Join-Path $env:USERPROFILE ".paddlex\official_models"
+    if (-not (Test-Path $cacheRoot)) {
+        return @()
+    }
+
+    return @(
+        Get-ChildItem -Path $cacheRoot -Force -ErrorAction SilentlyContinue |
+            Sort-Object Name |
+            ForEach-Object { $_.Name }
+    )
+}
+
+function Write-InstallValidationReport {
+    param(
+        [string]$ReportPath,
+        [string]$ProjectRoot,
+        [string]$VenvPython,
+        [string]$FinalMode,
+        [object]$InstalledSummary,
+        [string]$SharedLauncherConfigPath,
+        [string]$TranscriptLogPath
+    )
+
+    $cacheRoot = Join-Path $env:USERPROFILE ".paddlex\official_models"
+    $cacheEntries = Get-ModelCacheEntries
+    $paddleVersion = if ($InstalledSummary -and $InstalledSummary.paddle) { $InstalledSummary.paddle } else { "(not detected)" }
+    $paddleOcrVersion = if ($InstalledSummary -and $InstalledSummary.paddleocr) { $InstalledSummary.paddleocr } else { "(not detected)" }
+    $paddleXVersion = if ($InstalledSummary -and $InstalledSummary.paddlex) { $InstalledSummary.paddlex } else { "(not detected)" }
+    $onnxRuntimeVersion = if ($InstalledSummary -and $InstalledSummary.onnxruntime) { $InstalledSummary.onnxruntime } else { "(not detected)" }
+    $pyMuPdfVersion = if ($InstalledSummary -and $InstalledSummary.pymupdf) { $InstalledSummary.pymupdf } else { "(not detected)" }
+    $pythonVersion = if ($InstalledSummary -and $InstalledSummary.python) { $InstalledSummary.python } else { "(not detected)" }
+
+    $lines = New-Object 'System.Collections.Generic.List[string]'
+    [void]$lines.Add("PaddleOCR Launcher install validation report")
+    [void]$lines.Add("Generated at          : $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss zzz'))")
+    [void]$lines.Add("Project root          : $ProjectRoot")
+    [void]$lines.Add("Virtual env Python    : $VenvPython")
+    [void]$lines.Add("Install mode requested: $Mode")
+    [void]$lines.Add("GPU required          : $(if ($script:RequireGpu) { 'YES' } else { 'NO' })")
+    [void]$lines.Add("Final Paddle mode     : $FinalMode")
+    [void]$lines.Add("")
+    [void]$lines.Add("Installed packages")
+    [void]$lines.Add("  Python              : $pythonVersion")
+    [void]$lines.Add("  PaddlePaddle        : $paddleVersion")
+    [void]$lines.Add("  PaddleOCR           : $paddleOcrVersion")
+    [void]$lines.Add("  PaddleX             : $paddleXVersion")
+    [void]$lines.Add("  ONNX Runtime        : $onnxRuntimeVersion")
+    [void]$lines.Add("  PyMuPDF             : $pyMuPdfVersion")
+    [void]$lines.Add("")
+    [void]$lines.Add("Runtime validation")
+    [void]$lines.Add("  PP-OCRv6            : READY")
+    [void]$lines.Add("  Text detection      : $($script:DefaultTextDetectionModel)")
+    [void]$lines.Add("  Text recognition    : $($script:DefaultTextRecognitionModel)")
+    [void]$lines.Add("  OCR engine          : $($script:DefaultOCREngine)")
+    [void]$lines.Add("  PP-StructureV3      : READY")
+    [void]$lines.Add("  Paddle run_check    : OK")
+    [void]$lines.Add("")
+    [void]$lines.Add("Model download/cache")
+    [void]$lines.Add("  Cache root          : $cacheRoot")
+    [void]$lines.Add("  Cache root exists   : $(if (Test-Path $cacheRoot) { 'YES' } else { 'NO' })")
+    [void]$lines.Add("  Cache entries count : $($cacheEntries.Count)")
+    if ($cacheEntries.Count -gt 0) {
+        foreach ($entry in $cacheEntries) {
+            [void]$lines.Add("    - $entry")
+        }
+    } else {
+        [void]$lines.Add("    - (no cache entries detected)")
+    }
+    [void]$lines.Add("")
+    [void]$lines.Add("Notes")
+    [void]$lines.Add("  The installer initialized PP-OCRv6 and PP-StructureV3 during verification.")
+    [void]$lines.Add("  Successful verification means required runtime packages are installed and the selected pipelines can be created.")
+    [void]$lines.Add("  PaddleX may download additional PP-StructureV3 sub-models later when a specific document feature is first used.")
+    [void]$lines.Add("")
+    [void]$lines.Add("Shared OCR home file : $SharedLauncherConfigPath")
+    [void]$lines.Add("Transcript log file  : $TranscriptLogPath")
+
+    Set-Content -Path $ReportPath -Value $lines -Encoding ASCII
 }
 
 try {
@@ -2050,9 +2169,19 @@ try {
 
     Write-Host "Installation completed successfully." -ForegroundColor Green
     $SharedLauncherConfigPath = Register-SharedLauncherRoot -ProjectRoot $ProjectRoot
+    $ValidationReportPath = Join-Path $LogDir "install_validation_report.log"
+    Write-InstallValidationReport `
+        -ReportPath $ValidationReportPath `
+        -ProjectRoot $ProjectRoot `
+        -VenvPython $VenvPython `
+        -FinalMode $FinalMode `
+        -InstalledSummary $InstalledSummary `
+        -SharedLauncherConfigPath $SharedLauncherConfigPath `
+        -TranscriptLogPath $LogPath
     Write-Host "Shared OCR home registered: $ProjectRoot" -ForegroundColor Green
     Write-Host "Shared OCR home file: $SharedLauncherConfigPath" -ForegroundColor Green
     Write-Host "Log file: $LogPath" -ForegroundColor Yellow
+    Write-Host "Validation report: $ValidationReportPath" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Installed components:" -ForegroundColor Cyan
     Write-Host "Python          : $(if ($InstalledSummary) { $InstalledSummary.python } else { '(not detected)' })" -ForegroundColor Green
@@ -2062,8 +2191,9 @@ try {
     Write-Host "PaddlePaddle    : $(if ($InstalledSummary -and $InstalledSummary.paddle) { $InstalledSummary.paddle } else { '(not detected)' })" -ForegroundColor Green
     Write-Host "PaddleOCR       : $(if ($InstalledSummary -and $InstalledSummary.paddleocr) { $InstalledSummary.paddleocr } else { '(not detected)' })" -ForegroundColor Green
     Write-Host "PaddleX         : $(if ($InstalledSummary -and $InstalledSummary.paddlex) { $InstalledSummary.paddlex } else { '(not detected)' })" -ForegroundColor Green
+    Write-Host "ONNX Runtime    : $(if ($InstalledSummary -and $InstalledSummary.onnxruntime) { $InstalledSummary.onnxruntime } else { '(not detected)' })" -ForegroundColor Green
     Write-Host "PyMuPDF         : $(if ($InstalledSummary -and $InstalledSummary.pymupdf) { $InstalledSummary.pymupdf } else { '(not detected)' })" -ForegroundColor Green
-    Write-Host "PP-OCRv5        : READY" -ForegroundColor Green
+    Write-Host "PP-OCRv6        : READY ($($script:DefaultTextDetectionModel) + $($script:DefaultTextRecognitionModel), engine=$($script:DefaultOCREngine))" -ForegroundColor Green
     Write-Host "PP-StructureV3  : READY" -ForegroundColor Green
 
     try { Stop-Transcript | Out-Null } catch {}

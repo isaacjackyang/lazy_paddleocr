@@ -20,8 +20,9 @@ RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
 
 RUN python -m pip install --no-cache-dir \
     paddlepaddle==3.2.2 \
-    paddleocr==3.4.0 \
-    "paddlex[ocr]==3.4.2" \
+    paddleocr==3.7.0 \
+    "paddlex[ocr]==3.7.0" \
+    onnxruntime \
     pillow \
     pymupdf
 
