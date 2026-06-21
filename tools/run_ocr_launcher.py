@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import html
 import importlib
 import importlib.util
@@ -9,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Iterable
@@ -16,14 +18,18 @@ from typing import Any, Iterable
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 import fitz  # PyMuPDF
+import numpy as np
 
 
 DEFAULT_IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"]
 DEFAULT_PDF_EXTS = [".pdf"]
 PROMPT_PICTURE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-MODE_OCR = "ppocrv5"
+MODE_OCR = "ppocrv6"
 MODE_STRUCTURE = "ppstructurev3"
+DEFAULT_OCR_ENGINE = os.environ.get("PADDLE_OCR_ENGINE", "paddle_static")
+DEFAULT_TEXT_DETECTION_MODEL = os.environ.get("PADDLE_TEXT_DETECTION_MODEL", "PP-OCRv6_medium_det")
+DEFAULT_TEXT_RECOGNITION_MODEL = os.environ.get("PADDLE_TEXT_RECOGNITION_MODEL", "PP-OCRv6_medium_rec")
 OUTPUT_TXT_ONLY = "txt_only"
 OUTPUT_TXT_JSON = "txt_json"
 TEXT_LAYOUT_PER_FILE = "per_file"
@@ -253,8 +259,9 @@ def patch_frozen_paddlex_extra_checks() -> None:
 
 def parse_args() -> argparse.Namespace:
     default_device = normalize_device_preference(os.environ.get("PADDLE_OCR_DEVICE"))
+    default_gpu_id = normalize_gpu_id(os.environ.get("PADDLE_OCR_GPU_ID"))
     parser = argparse.ArgumentParser(
-        description="Unified launcher for PP-OCRv5 / PP-StructureV3 batch OCR."
+        description="Unified launcher for PP-OCRv6 / PP-StructureV3 batch OCR."
     )
     parser.add_argument("--root", type=str, default=None, help="Root folder to scan. Default: app directory")
     parser.add_argument("--recursive", action="store_true", help="Recursively scan subfolders")
@@ -284,6 +291,12 @@ def parse_args() -> argparse.Namespace:
         default=default_device,
         help="Execution device. 'auto' tries the library default first and falls back to CPU on GPU init errors.",
     )
+    parser.add_argument(
+        "--gpu-id",
+        type=int,
+        default=default_gpu_id,
+        help="GPU index to use, e.g. 0 or 1. Default: auto-select the GPU with the most free VRAM.",
+    )
     return parser.parse_args()
 
 
@@ -297,6 +310,19 @@ def normalize_device_preference(raw: str | None) -> str:
 
     print(f"[WARN] Unsupported device preference {raw!r}. Falling back to '{DEVICE_AUTO}'.")
     return DEVICE_AUTO
+
+
+def normalize_gpu_id(raw: str | None) -> int | None:
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"[WARN] Unsupported GPU id {raw!r}. Falling back to auto GPU selection.")
+        return None
+    if value < 0:
+        return None
+    return value
 
 
 def normalize_exts(raw: str) -> set[str]:
@@ -453,7 +479,7 @@ def render_pdf_pages(
     dpi: int,
     keep_images: bool,
     pdf_image_dirname: str,
-) -> Iterable[tuple[int, bytes, str | None]]:
+) -> Iterable[tuple[int, np.ndarray, str | None]]:
     doc = fitz.open(pdf_path)
     scale = dpi / 72.0
     matrix = fitz.Matrix(scale, scale)
@@ -461,14 +487,19 @@ def render_pdf_pages(
     try:
         for page_index, page in enumerate(doc):
             pix = page.get_pixmap(matrix=matrix, alpha=False)
-            png_bytes = pix.tobytes("png")
+            page_image = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height,
+                pix.width,
+                pix.n,
+            ).copy()
             saved_path = None
             if keep_images:
+                png_bytes = pix.tobytes("png")
                 image_dir.mkdir(parents=True, exist_ok=True)
                 img_path = image_dir / f"{pdf_path.stem}_page_{page_index + 1:04d}.png"
                 img_path.write_bytes(png_bytes)
                 saved_path = str(img_path)
-            yield page_index, png_bytes, saved_path
+            yield page_index, page_image, saved_path
     finally:
         doc.close()
 
@@ -819,8 +850,8 @@ def build_folder_kb(
 
 def ask_mode() -> str:
     print("\nChoose mode:")
-    print("中文說明：PP-OCRv5 偏向純文字辨識；PP-StructureV3 會額外做版面分析。")
-    print("1. PP-OCRv5")
+    print("中文說明：PP-OCRv6 偏向純文字辨識；PP-StructureV3 會額外做版面分析。")
+    print("1. PP-OCRv6")
     print("2. PP-StructureV3")
     print("3. Run both")
     while True:
@@ -1171,6 +1202,19 @@ def is_gpu_init_error(exc: BaseException) -> bool:
     return any(hint in message for hint in hints)
 
 
+def is_gpu_oom_error(exc: BaseException) -> bool:
+    message = exception_chain_text(exc).lower()
+    hints = (
+        "resourceexhaustederror",
+        "out of memory",
+        "cannot allocate",
+        "cuda_allocator",
+        "allocated memory",
+        "available memory",
+    )
+    return any(hint in message for hint in hints)
+
+
 def is_onednn_runtime_error(exc: BaseException) -> bool:
     message = exception_chain_text(exc).lower()
     hints = (
@@ -1185,6 +1229,63 @@ def is_onednn_runtime_error(exc: BaseException) -> bool:
         "pir kernel",
     )
     return any(hint in message for hint in hints)
+
+
+def query_nvidia_gpu_free_memory() -> list[tuple[int, int, int]]:
+    try:
+        completed = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,memory.free,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except Exception:
+        return []
+
+    gpus: list[tuple[int, int, int]] = []
+    for raw_line in completed.stdout.splitlines():
+        parts = [part.strip() for part in raw_line.split(",")]
+        if len(parts) < 3:
+            continue
+        try:
+            index = int(parts[0])
+            free_mib = int(parts[1])
+            total_mib = int(parts[2])
+        except ValueError:
+            continue
+        gpus.append((index, free_mib, total_mib))
+    return gpus
+
+
+def choose_best_gpu_id(explicit_gpu_id: int | None) -> int | None:
+    if explicit_gpu_id is not None:
+        return explicit_gpu_id
+
+    gpus = query_nvidia_gpu_free_memory()
+    if not gpus:
+        return None
+
+    index, _, _ = max(gpus, key=lambda item: item[1])
+    return index
+
+
+def resolve_runtime_device(device_preference: str, gpu_id: int | None) -> str | None:
+    if device_preference == DEVICE_CPU:
+        return DEVICE_CPU
+
+    selected_gpu_id = choose_best_gpu_id(gpu_id)
+    if selected_gpu_id is not None:
+        return f"{DEVICE_GPU}:{selected_gpu_id}"
+
+    if device_preference == DEVICE_GPU:
+        return DEVICE_GPU
+
+    return None
 
 
 def format_pipeline_init_error(mode: str, exc: BaseException, device_preference: str) -> str:
@@ -1203,7 +1304,7 @@ def format_pipeline_init_error(mode: str, exc: BaseException, device_preference:
             return (
                 f"{detail}\n"
                 "PP-StructureV3 dependencies are incomplete in this .venv. "
-                "Run 'install_manual_recovery.ps1' or install 'paddlex[ocr]==3.4.2'."
+                "Run 'install_manual_recovery.ps1' or install 'paddlex[ocr]==3.7.0'."
             )
         return detail
 
@@ -1344,6 +1445,24 @@ def build_pipeline(
     )
 
     if mode == MODE_OCR:
+        apply_pipeline_setting_if_supported(
+            pipeline_factory,
+            pipeline_kwargs,
+            "engine",
+            DEFAULT_OCR_ENGINE,
+        )
+        apply_pipeline_setting_if_supported(
+            pipeline_factory,
+            pipeline_kwargs,
+            "text_detection_model_name",
+            DEFAULT_TEXT_DETECTION_MODEL,
+        )
+        apply_pipeline_setting_if_supported(
+            pipeline_factory,
+            pipeline_kwargs,
+            "text_recognition_model_name",
+            DEFAULT_TEXT_RECOGNITION_MODEL,
+        )
         pipeline_kwargs.setdefault("use_doc_orientation_classify", False)
         pipeline_kwargs.setdefault("use_doc_unwarping", False)
         pipeline_kwargs.setdefault("use_textline_orientation", False)
@@ -1353,14 +1472,25 @@ def build_pipeline(
     apply_pipeline_setting_if_supported(
         pipeline_factory,
         pipeline_kwargs,
+        "engine",
+        DEFAULT_OCR_ENGINE,
+    )
+    apply_pipeline_setting_if_supported(
+        pipeline_factory,
+        pipeline_kwargs,
         "layout_threshold",
         tuning_settings.get("layout_threshold"),
     )
     return pipeline_factory(**pipeline_kwargs)
 
 
-def create_mode_pipeline(mode: str, device_preference: str, tuning_settings: dict[str, Any]):
-    initial_device = None if device_preference == DEVICE_AUTO else device_preference
+def create_mode_pipeline(
+    mode: str,
+    device_preference: str,
+    tuning_settings: dict[str, Any],
+    gpu_id: int | None,
+):
+    initial_device = resolve_runtime_device(device_preference, gpu_id)
 
     try:
         mkldnn_disabled = initial_device == DEVICE_CPU
@@ -1372,7 +1502,7 @@ def create_mode_pipeline(mode: str, device_preference: str, tuning_settings: dic
             tuning_settings,
             disable_mkldnn=mkldnn_disabled,
         )
-        runtime_device = device_preference if initial_device else "auto (library default)"
+        runtime_device = initial_device if initial_device else "auto (library default)"
         return {
             "pipeline": pipeline,
             "runtime_device": runtime_device,
@@ -1395,12 +1525,19 @@ def create_mode_pipeline(mode: str, device_preference: str, tuning_settings: dic
         }
 
 
-def rebuild_runtime_with_cpu_retry(mode: str, runtime_state: dict[str, Any], exc: BaseException) -> None:
+def rebuild_runtime_with_cpu_retry(
+    mode: str,
+    runtime_state: dict[str, Any],
+    exc: BaseException,
+    reason: str,
+) -> None:
     print(
-        f"[WARN][{mode}] oneDNN / PIR runtime failed. "
+        f"[WARN][{mode}] {reason}. "
         "Retrying with a fresh CPU pipeline and MKLDNN disabled."
     )
     print(f"  Detail: {exception_chain_text(exc)}")
+    runtime_state["pipeline"] = None
+    gc.collect()
     force_cpu_runtime(disable_mkldnn=True)
     runtime_state["pipeline"] = build_pipeline(
         mode,
@@ -1408,7 +1545,7 @@ def rebuild_runtime_with_cpu_retry(mode: str, runtime_state: dict[str, Any], exc
         runtime_state.get("tuning_settings", {}),
         disable_mkldnn=True,
     )
-    runtime_state["runtime_device"] = "cpu (onednn/pir retry, mkldnn disabled)"
+    runtime_state["runtime_device"] = f"cpu ({reason.lower()}, mkldnn disabled)"
     runtime_state["mkldnn_disabled"] = True
     print(f"  Runtime device: {runtime_state['runtime_device']}")
 
@@ -1418,15 +1555,23 @@ def predict_with_runtime_retry(mode: str, runtime_state: dict[str, Any], input_d
         try:
             return runtime_state["pipeline"].predict(input_data)
         except Exception as exc:
-            if attempt >= 1 or not is_onednn_runtime_error(exc):
+            if attempt >= 1:
                 raise
-            rebuild_runtime_with_cpu_retry(mode, runtime_state, exc)
+            if is_onednn_runtime_error(exc):
+                rebuild_runtime_with_cpu_retry(mode, runtime_state, exc, "oneDNN / PIR runtime failed")
+                continue
+            if is_gpu_oom_error(exc):
+                rebuild_runtime_with_cpu_retry(mode, runtime_state, exc, "GPU out of memory")
+                continue
+            raise
 
 
 def should_skip_generated_file(path: Path) -> bool:
     generated_suffixes = (
         f".{MODE_OCR}.txt",
         f".{MODE_OCR}.json",
+        ".ppocrv5.txt",
+        ".ppocrv5.json",
         f".{MODE_STRUCTURE}.txt",
         f".{MODE_STRUCTURE}.json",
     )
@@ -1448,6 +1593,7 @@ def run_mode(
     output_mode: str,
     text_output_layout: str,
     device_preference: str,
+    gpu_id: int | None,
     pdf_dpi: int,
     keep_pdf_images: bool,
     pdf_image_dirname: str,
@@ -1475,7 +1621,7 @@ def run_mode(
     print(f"text_det_thresh: {describe_tuning_setting(tuning_settings.get('text_det_thresh'))}")
     print(f"text_det_box_thresh: {describe_tuning_setting(tuning_settings.get('text_det_box_thresh'))}")
     print(f"text_det_unclip_ratio: {describe_tuning_setting(tuning_settings.get('text_det_unclip_ratio'))}")
-    text_rec_fallback = "0.00 (current PP-OCRv5 default)" if mode == MODE_OCR else "current default"
+    text_rec_fallback = "0.00 (current PP-OCRv6 default)" if mode == MODE_OCR else "current default"
     print(
         "text_rec_score_thresh: "
         f"{describe_tuning_setting(tuning_settings.get('text_rec_score_thresh'), fallback=text_rec_fallback)}"
@@ -1489,12 +1635,13 @@ def run_mode(
         )
         print(f"Coordinate mode: {'on' if structure_coordinate_mode else 'off'}")
     print(f"Device preference: {device_preference}")
+    print(f"GPU id preference: {gpu_id if gpu_id is not None else 'auto (most free VRAM)'}")
     if pdf_exts:
         print(f"PDF DPI: {pdf_dpi}")
     print(f"Keep PDF images: {keep_pdf_images}")
 
     try:
-        runtime_state = create_mode_pipeline(mode, device_preference, tuning_settings)
+        runtime_state = create_mode_pipeline(mode, device_preference, tuning_settings, gpu_id)
         pipeline = runtime_state["pipeline"]
         runtime_device = runtime_state["runtime_device"]
         print(f"Runtime device: {runtime_device}")
@@ -1727,6 +1874,7 @@ def main() -> int:
             output_mode=output_mode,
             text_output_layout=text_output_layout,
             device_preference=device_preference,
+            gpu_id=args.gpu_id,
             pdf_dpi=pdf_dpi,
             keep_pdf_images=args.keep_pdf_images,
             pdf_image_dirname=args.pdf_image_dirname,
@@ -1752,6 +1900,7 @@ def main() -> int:
             output_mode=output_mode,
             text_output_layout=text_output_layout,
             device_preference=device_preference,
+            gpu_id=args.gpu_id,
             pdf_dpi=pdf_dpi,
             keep_pdf_images=args.keep_pdf_images,
             pdf_image_dirname=args.pdf_image_dirname,

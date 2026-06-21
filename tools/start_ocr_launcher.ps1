@@ -6,6 +6,7 @@ param(
     [switch]$NoRecursive,
     [ValidateSet("Auto", "CPU", "GPU")]
     [string]$Device = "Auto",
+    [int]$GpuId = -1,
     [int]$PdfDpi = 200,
     [switch]$KeepPdfImages,
     [string]$PdfImageDirname = "_pdf_pages",
@@ -305,6 +306,7 @@ try {
     Write-Host "Scan Root         : $(if ($ResolvedRoot) { $ResolvedRoot } else { $ProjectRoot })"
     Write-Host "Recursive         : $RecursiveEnabled"
     Write-Host "Device            : $Device"
+    Write-Host "GPU ID            : $(if ($GpuId -ge 0) { $GpuId } else { 'Auto' })"
     Write-Host "PDF DPI           : $PdfDpi"
     Write-Host "Keep PDF Images   : $KeepPdfImages"
     Write-Host "PDF Image Dirname : $PdfImageDirname"
@@ -325,6 +327,11 @@ try {
 
     $ArgsList += "--device"
     $ArgsList += $Device.ToLowerInvariant()
+
+    if ($GpuId -ge 0) {
+        $ArgsList += "--gpu-id"
+        $ArgsList += "$GpuId"
+    }
 
     $ArgsList += "--pdf-dpi"
     $ArgsList += "$PdfDpi"

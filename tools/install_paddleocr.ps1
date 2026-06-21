@@ -44,7 +44,10 @@ function Get-ProjectRoot {
 
 $ProjectRoot = Get-ProjectRoot
 $OutputRoot = Join-Path $ProjectRoot "output"
-$PaddleVersion = "3.0.0"
+$PaddleCPUVersion = "3.3.0"
+$PaddleGPUVersion = "3.2.2"
+$PaddleOCRVersion = "3.7.0"
+$PaddleXVersion = "3.7.0"
 $GpuCudaChannel = "cu118"  # Change to "cu126" if your GPU environment needs it.
 
 Set-Location $ProjectRoot
@@ -113,6 +116,9 @@ function Install-PaddleEnvironment {
         [string]$PaddlePackage,
 
         [Parameter(Mandatory = $true)]
+        [string]$PaddleVersion,
+
+        [Parameter(Mandatory = $true)]
         [string]$PackageIndexUrl,
 
         [Parameter(Mandatory = $true)]
@@ -127,6 +133,7 @@ function Install-PaddleEnvironment {
     $envPath = Join-Path $ProjectRoot $EnvName
     $pythonExe = Join-Path $envPath "Scripts\python.exe"
     $paddlexExe = Join-Path $envPath "Scripts\paddlex.exe"
+    $paddleocrExe = Join-Path $envPath "Scripts\paddleocr.exe"
     $outputBase = Join-Path $OutputRoot $OutputName
     $ocrOutput = Join-Path $outputBase "ocr"
     $structureOutput = Join-Path $outputBase "pp_structure_v3"
@@ -144,15 +151,20 @@ function Install-PaddleEnvironment {
     Write-Host "[$OutputName] Installing $PaddlePackage $PaddleVersion ..." -ForegroundColor Cyan
     Invoke-NativeCommand $pythonExe "-m" "pip" "install" "$PaddlePackage==$PaddleVersion" "-i" $PackageIndexUrl
 
-    Write-Host "[$OutputName] Installing PaddleX OCR dependencies..." -ForegroundColor Cyan
-    Invoke-NativeCommand $pythonExe "-m" "pip" "install" "paddlex[ocr]"
+    Write-Host "[$OutputName] Installing PaddleOCR 3.7.0, PaddleX OCR dependencies, and ONNX Runtime..." -ForegroundColor Cyan
+    Invoke-NativeCommand $pythonExe "-m" "pip" "install" "--upgrade" "paddleocr==$PaddleOCRVersion" "paddlex[ocr]==$PaddleXVersion" "onnxruntime" "pillow" "pymupdf"
 
     if (-not (Test-Path $paddlexExe)) {
         throw "paddlex.exe was not found after installation: $paddlexExe"
     }
 
+    if (-not (Test-Path $paddleocrExe)) {
+        throw "paddleocr.exe was not found after installation: $paddleocrExe"
+    }
+
     Write-Host "[$OutputName] Version check" -ForegroundColor Cyan
     Invoke-NativeCommand $pythonExe "-c" 'import paddle; print("paddle =", paddle.__version__)'
+    Invoke-NativeCommand $pythonExe "-c" 'import paddleocr, onnxruntime; print("paddleocr =", getattr(paddleocr, "__version__", "unknown")); print("onnxruntime =", onnxruntime.__version__)'
     Invoke-NativeCommand $pythonExe "-m" "pip" "show" "paddlex"
 
     if ($SkipPipelineTests) {
@@ -163,22 +175,26 @@ function Install-PaddleEnvironment {
     New-Item -ItemType Directory -Force -Path $ocrOutput | Out-Null
     New-Item -ItemType Directory -Force -Path $structureOutput | Out-Null
 
-    Write-Host "[$OutputName] Testing PP-OCRv5 via the OCR pipeline..." -ForegroundColor Cyan
+    Write-Host "[$OutputName] Testing PP-OCRv6 via the OCR pipeline..." -ForegroundColor Cyan
     $ocrArgs = @(
-        "--pipeline", "OCR",
-        "--input", "https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/general_ocr_002.png",
+        "ocr",
+        "-i", "https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/general_ocr_002.png",
+        "--text_detection_model_name", "PP-OCRv6_medium_det",
+        "--text_recognition_model_name", "PP-OCRv6_medium_rec",
+        "--engine", "paddle_static",
         "--use_doc_orientation_classify", "False",
         "--use_doc_unwarping", "False",
         "--use_textline_orientation", "False",
         "--save_path", $ocrOutput,
         "--device", $Device
     )
-    Invoke-NativeCommand $paddlexExe @ocrArgs
+    Invoke-NativeCommand $paddleocrExe @ocrArgs
 
     Write-Host "[$OutputName] Testing PP-StructureV3..." -ForegroundColor Cyan
     $structureArgs = @(
         "--pipeline", "PP-StructureV3",
         "--input", "https://paddle-model-ecology.bj.bcebos.com/paddlex/imgs/demo_image/pp_structure_v3_demo.png",
+        "--engine", "paddle_static",
         "--use_doc_orientation_classify", "False",
         "--use_doc_unwarping", "False",
         "--use_textline_orientation", "False",
@@ -201,6 +217,7 @@ Install-PaddleEnvironment `
     -PythonVersion $pythonVersion `
     -EnvName ".venv-cpu" `
     -PaddlePackage "paddlepaddle" `
+    -PaddleVersion $PaddleCPUVersion `
     -PackageIndexUrl "https://www.paddlepaddle.org.cn/packages/stable/cpu/" `
     -Device "cpu" `
     -OutputName "cpu"
@@ -209,6 +226,7 @@ Install-PaddleEnvironment `
     -PythonVersion $pythonVersion `
     -EnvName ".venv-gpu" `
     -PaddlePackage "paddlepaddle-gpu" `
+    -PaddleVersion $PaddleGPUVersion `
     -PackageIndexUrl "https://www.paddlepaddle.org.cn/packages/stable/$GpuCudaChannel/" `
     -Device "gpu:0" `
     -OutputName "gpu" `
